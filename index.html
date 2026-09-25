@@ -353,36 +353,42 @@ function saveLocal(){
 }
 function downloadJSON(){saveLocal();dl(new Blob([JSON.stringify(db,null,2)],{type:"application/json"}),"AKC_database_actualizada.json")}
 async function downloadExcel(){
-  if(!originalBytes){alert("No encuentro NORMATIVOS_AKC.xlsx. Súbelo junto a index.html y database.json.");return}
-  loadJSZip().then(async()=>{
-    try{
-      const zip=await JSZip.loadAsync(originalBytes);
-      const wbXml=await zip.file("xl/workbook.xml").async("string");
-      const relXml=await zip.file("xl/_rels/workbook.xml.rels").async("string");
-      const sm=wbXml.match(/<sheet\b[^>]*name="NORMATIVOS"[^>]*r:id="([^"]+)"/i);
-      if(!sm)throw Error("No se encontró la hoja NORMATIVOS.");
-      const rm=relXml.match(new RegExp('<Relationship\\b[^>]*Id="'+escapeRegExp(sm[1])+'"[^>]*Target="([^"]+)"','i'));
-      if(!rm)throw Error("No se encontró el XML de la hoja NORMATIVOS.");
-      let target=rm[1].replace(/^\/+/,"").replace(/^xl\//,"").replace(/^\.?\//,"");
-      const sheetPath="xl/"+target;
-      let xml=await zip.file(sheetPath).async("string");
-      const colMap={};db.athletes.forEach((a,i)=>colMap[a.name]=(Number(a.column)||i+3)-1);
-      db.items.forEach(item=>Object.entries(item.status||{}).forEach(([name,code])=>{
-        const c=colMap[name];if(c===undefined)return;
-        const ref=excelCellRef(item.row-1,c);
-        const val=code==="C"?"Consolidado":code==="EP"?"En proceso":code==="P"?"Proyección":"N/A";
-        xml=setCellSharedString(xml,ref,val);
-      }));
-      zip.file(sheetPath,xml);
-      const out=await zip.generateAsync({type:"blob",compression:"STORE",mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-      const url=URL.createObjectURL(out),a=document.createElement("a");
-      a.href=url;a.download="NORMATIVOS_AKC_ACTUALIZADO.xlsx";a.style.display="none";
-      document.body.appendChild(a);a.click();a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),5000);
-      toast("Excel descargado correctamente");
-    }catch(e){console.error(e);alert("No se pudo generar el Excel: "+e.message)}
-  });
+ if(!originalBytes){alert("No encuentro NORMATIVOS_AKC.xlsx. El archivo maestro está incluido en este paquete.");return}
+ try{await loadJSZip();const zip=await JSZip.loadAsync(originalBytes);if(db.athletes.length>40)throw Error("El formato actual permite hasta 40 atletas por archivo Excel.");await patchNormativosSheet(zip);await patchConsolidadoSheet(zip);await patchFichaAndIndicadores(zip);const out=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6},mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});const url=URL.createObjectURL(out),a=document.createElement("a");a.href=url;a.download="NORMATIVOS_AKC_ACTUALIZADO.xlsx";a.style.display="none";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);toast("Excel maestro descargado correctamente")}catch(e){console.error(e);alert("No se pudo generar el Excel: "+(e?.message||e))}
 }
+async function patchNormativosSheet(zip){
+ const path="xl/worksheets/sheet1.xml";let xml=await zip.file(path).async("string");const itemByRow={};db.items.forEach(x=>itemByRow[x.row]=x);
+ xml=xml.replace(/sqref="C3:AF279"/g,'sqref="C3:AP279"');xml=xml.replace(/<x14:sqref>C176:AF231 C3:AF46 C49:AF105 C108:AF142 C145:AF173 C234:AF279<\/x14:sqref>/g,'<x14:sqref>C176:AP231 C3:AP46 C49:AP105 C108:AP142 C145:AP173 C234:AP279</x14:sqref>');xml=xml.replace(/<mergeCell ref="A2:AF2"\s*\/>/g,'<mergeCell ref="A2:AP2"/>');
+ const active=db.athletes.map((a,i)=>({a,col:excelCol(i+3)}));
+ for(let row=1;row<=279;row++){
+   for(const [i,x] of active.entries()){
+     const ref=x.col+row;let value=null;
+     if(row===1)value=x.a.name;
+     else if(row>=3&&itemByRow[row]){const code=itemByRow[row].status?.[x.a.name]||"NA";value=code==="C"?"Consolidado":code==="EP"?"En proceso":code==="P"?"Proyección":"N/A"}
+     else continue;
+     const style=getStyleFromCell(xml,ref,"AF"+row);xml=upsertCell(xml,row,ref,style,value);
+   }
+   for(let i=active.length;i<40;i++){const ref=excelCol(i+3)+row;xml=clearCell(xml,row,ref)}
+ }
+ zip.file(path,xml);
+}
+async function patchConsolidadoSheet(zip){
+ const path="xl/worksheets/sheet4.xml";let xml=await zip.file(path).async("string");const n=db.athletes.length;const last=3+n;xml=xml.replace(/ref="A1:H\d+"/,'ref="A1:H'+last+'"');
+ for(let r=34;r<=43;r++){const re=new RegExp('<row\\b[^>]*r="'+r+'"[^>]*>[\\s\\S]*?<\\/row>','i');if(r>last){xml=xml.replace(re,'')}}
+ for(let r=34;r<=last;r++){const name=db.athletes[r-4]?.name||"";const col=excelCol(r-1);let row='<row r="'+r+'" spans="1:8"><c r="A'+r+'" s="56" t="inlineStr"><is><t>'+xmlEscape(name)+'</t></is></c><c r="B'+r+'" s="57"><f>COUNTA(NORMATIVOS!'+col+'3:'+col+'279)</f><v>0</v></c><c r="C'+r+'" s="57"><f>COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"Consolidado")</f><v>0</v></c><c r="D'+r+'" s="57"><f>COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"En proceso")</f><v>0</v></c><c r="E'+r+'" s="57"><f>COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"Proyección")</f><v>0</v></c><c r="F'+r+'" s="57"><f>COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"N/A")</f><v>0</v></c><c r="G'+r+'" s="58"><f>IFERROR(C'+r+'/(B'+r+'-F'+r+'),0)</f><v>0</v></c><c r="H'+r+'" s="59" t="str"><f>IF(G'+r+'>=0.8,"Alto avance",IF(G'+r+'>=0.5,"Avance medio",IF(G'+r+'>=0.3,"Avance inicial",IF(G'+r+'>=0.1,"Base solida","Base inicial"))))</f><v>Base inicial</v></c></row>';
+   const re=new RegExp('<row\\b[^>]*r="'+r+'"[^>]*>[\\s\\S]*?<\\/row>','i');if(re.test(xml))xml=xml.replace(re,row);else xml=xml.replace('</sheetData>',row+'</sheetData>')}
+ zip.file(path,xml);
+}
+async function patchFichaAndIndicadores(zip){
+ let p="xl/worksheets/sheet2.xml",xml=await zip.file(p).async("string");xml=xml.replace(/\$C\$1:\$AF\$1/g,'$C$1:$AP$1').replace(/\$C\$3:\$AF\$279/g,'$C$3:$AP$279').replace(/\$A\$4:\$A\$33/g,'$A$4:$A$43').replace(/\$B\$4:\$B\$33/g,'$B$4:$B$43').replace(/\$C\$4:\$C\$33/g,'$C$4:$C$43').replace(/\$D\$4:\$D\$33/g,'$D$4:$D$43');zip.file(p,xml);
+ p="xl/worksheets/sheet3.xml";xml=await zip.file(p).async("string");xml=xml.replace(/CONSOLIDADO!A4:A33/g,'CONSOLIDADO!A4:A43').replace(/CONSOLIDADO!C4:C33/g,'CONSOLIDADO!C4:C43').replace(/CONSOLIDADO!D4:D33/g,'CONSOLIDADO!D4:D43').replace(/CONSOLIDADO!E4:E33/g,'CONSOLIDADO!E4:E43').replace(/CONSOLIDADO!F4:F33/g,'CONSOLIDADO!F4:F43').replace(/CONSOLIDADO!G4:G33/g,'CONSOLIDADO!G4:G43');zip.file(p,xml)
+}
+function excelCol(n){let s="";while(n>0){let r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26)}return s}
+function getStyleFromCell(xml,ref,fallback){let m=xml.match(new RegExp('<c\\b([^>]*\\br="'+escapeRegExp(ref)+'"[^>]*)','i'));if(m)return m[1].match(/\bs="([^"]+)"/i)?.[1]||"";m=xml.match(new RegExp('<c\\b([^>]*\\br="'+escapeRegExp(fallback)+'"[^>]*)','i'));return m?m[1].match(/\bs="([^"]+)"/i)?.[1]||"":""}
+function upsertCell(xml,row,ref,style,value){const cell='<c r="'+ref+'"'+(style?' s="'+style+'"':'')+' t="inlineStr"><is><t>'+xmlEscape(value)+'</t></is></c>';const re=new RegExp('<c\\b([^>]*\\br="'+escapeRegExp(ref)+'"[^>]*)>([\\s\\S]*?)</c>','i');if(re.test(xml))return xml.replace(re,cell);const self=new RegExp('<c\\b([^>]*\\br="'+escapeRegExp(ref)+'"[^>]*)\\s*/>','i');if(self.test(xml))return xml.replace(self,cell);const rr=new RegExp('(<row\\b[^>]*\\br="'+row+'"[^>]*>)([\\s\\S]*?)(</row>)','i'),m=xml.match(rr);if(!m)return xml;let inside=m[2],col=ref.match(/^[A-Z]+/)[0],at=inside.length;for(const c of inside.matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"[^>]*>/gi)){if(colToNum(c[1])>colToNum(col)){at=c.index;break}}inside=inside.slice(0,at)+cell+inside.slice(at);return xml.replace(rr,m[1]+inside+m[3])}
+function clearCell(xml,row,ref){const re=new RegExp('<c\\b([^>]*\\br="'+escapeRegExp(ref)+'"[^>]*)>([\\s\\S]*?)</c>','i');if(re.test(xml))return xml.replace(re,(m,a)=>'<c'+a.replace(/\s+t="[^"]*"/i,'')+'/>');return xml}
+function colToNum(c){let n=0;for(const ch of c)n=n*26+ch.charCodeAt(0)-64;return n}
+function xmlEscape(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;')}
 function loadJSZip(){
   if(window.JSZip)return Promise.resolve();
   return new Promise((resolve,reject)=>{
