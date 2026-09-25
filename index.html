@@ -84,7 +84,7 @@ function openAdmin(){document.getElementById("adminModal").classList.add("show")
 function closeModal(id){document.getElementById(id).classList.remove("show")}
 function dl(blob,name){const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1500)}
 async function downloadExcel(){
-  window.__excelGeneratorVersion="V3";
+  window.__excelGeneratorVersion="V4";
   if(!db||!cloudReady){alert("Primero espera a que el repositorio aparezca como Sincronizado.");return}
   const btn=[...document.querySelectorAll("button")].find(b=>b.textContent.includes("Descargar Excel"));
   if(btn)btn.disabled=true;setSync("busy","Generando Excel…");
@@ -140,7 +140,7 @@ async function downloadExcel(){
         // Style comes from the original destination column when it existed; for new columns beyond AF use AF's style.
         const sourceStyleCol=(3+i)<=32?colLetters(3+i):"AF";
         const sid=originalStyle.get(rowNum+"|"+sourceStyleCol);if(sid)cell=cell.replace(/\bs="\d+"/,'s="'+sid+'"');
-        cell=cell.replace(new RegExp('r="C'+r+'"'),'r="'+outCol+r+'"');
+        cell=cell.replace(new RegExp('r="C'+rowNum+'"'),'r="'+outCol+rowNum+'"');
         if(rowNum===1){if(i<ordered.length)cell=setInline(cell,ordered[i].name);else cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"");}
         else if(i<ordered.length){const st=itemByRow.get(rowNum)?.status?.[ordered[i].name]||"NA";cell=setShared(cell,statusIndex[st]??statusIndex.NA)}
         else{cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"")}
@@ -165,7 +165,7 @@ async function downloadExcel(){
     const selected=document.getElementById("athlete")?.value||ordered[0]?.name||"";let rr3=(s2.match(/<row r="3".*?<\/row>/s)||[])[0];if(rr3){const b=getCell(rr3,'B',3);if(b)rr3=replaceCell(rr3,'B',3,setInline(b,selected));s2=s2.replace(/<row r="3".*?<\/row>/s,rr3)}zip.file("xl/worksheets/sheet2.xml",s2);
 
     // INDICADORES
-    let s3=await zip.file("xl/worksheets/sheet3.xml").async("string");for(const c of ['A','C','D','E','F','G'])s3=s3.replaceAll('CONSOLIDADO!'+c+'4:'+c+'33','CONSOLIDADO!'+c+'4:'+c+(3+ordered.length));zip.file("xl/worksheets/sheet3.xml",s3);
+    let s3=await zip.file("xl/worksheets/sheet3.xml").async("string");s3=s3.replace(/CONSOLIDADO!([A-H])4:\1(33|34)/g,(m,c)=>'CONSOLIDADO!'+c+'4:'+c+(3+ordered.length));s3=s3.replace(/CONSOLIDADO!A4:A33/g,'CONSOLIDADO!A4:A'+(3+ordered.length)).replace(/CONSOLIDADO!G4:G33/g,'CONSOLIDADO!G4:G'+(3+ordered.length));zip.file("xl/worksheets/sheet3.xml",s3);
 
     let wb=await zip.file("xl/workbook.xml").async("string");wb=wb.replace(/<calcPr[^>]*\/>/,'<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>');if(!wb.includes('<calcPr'))wb=wb.replace('</workbook>','<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>');zip.file("xl/workbook.xml",wb);if(zip.file("xl/calcChain.xml"))zip.remove("xl/calcChain.xml");
     const out=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6},mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});dl(out,"NORMATIVOS_AKC_RESPALDO_"+new Date().toISOString().slice(0,10)+".xlsx");setSync("ok","Sincronizado");toast("Excel generado con "+ordered.length+" atletas");
