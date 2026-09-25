@@ -1,16 +1,7 @@
-# AKC Repositorio — Paso 2
+# AKC Repositorio – Excel corregido
 
-Esta versión conserva el repositorio/Firebase y el Excel maestro validado.
+Esta versión conserva el repositorio y Firebase y corrige la descarga del Excel.
 
-## Descargar Excel
+En dispositivos compatibles con Chrome/Android usa el selector nativo de archivos y entrega el documento explícitamente como Microsoft Excel (.xlsx), evitando que el sistema lo trate como ZIP.
 
-`Descargar Excel` toma la plantilla `NORMATIVOS_AKC.xlsx` y actualiza directamente en su XML las celdas de estado de los atletas existentes (C / EP / P / NA), conservando la estructura original del libro.
-
-Esta fase no incorpora todavía atletas nuevos al Excel ni modifica la estructura de las demás hojas. Esa será la siguiente fase después de validar esta exportación.
-
-## Firebase
-
-Colección: `normativosAKC`
-Documento: `estado`
-
-El repositorio sigue usando Firebase como fuente central de datos.
+La generación sigue usando el Excel maestro `NORMATIVOS_AKC.xlsx` y aplica los estados actuales de los atletas existentes.

@@ -82,7 +82,30 @@ function checkDelete(){const n=document.getElementById("deleteName").textContent
 async function deleteAthlete(){const n=document.getElementById("deleteName").textContent;db.athletes=db.athletes.filter(a=>a.name!==n);db.items.forEach(x=>{if(x.status)delete x.status[n]});if(!db.athletes.length){alert("Debe quedar al menos un atleta en el repositorio.");return}closeModal("deleteModal");renderAll();await saveCloud();toast("Atleta eliminado definitivamente")}
 function openAdmin(){document.getElementById("adminModal").classList.add("show")}
 function closeModal(id){document.getElementById(id).classList.remove("show")}
-function dl(blob,name){const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1500)}
+async function saveFile(blob,name){
+  if(window.showSaveFilePicker){
+    try{
+      const handle=await window.showSaveFilePicker({
+        suggestedName:name,
+        types:[{description:"Libro de Microsoft Excel",accept:{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"]}}],
+        excludeAcceptAllOption:false
+      });
+      const writable=await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return true;
+    }catch(e){
+      if(e&&e.name==="AbortError") return false;
+      console.warn("Selector nativo no disponible; se usará descarga estándar",e);
+    }
+  }
+  const u=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=u;a.download=name;a.type=blob.type||"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  a.style.display="none";document.body.appendChild(a);a.click();
+  setTimeout(()=>{a.remove();URL.revokeObjectURL(u)},3000);
+  return true;
+}
+function dl(blob,name){return saveFile(blob,name)}
 async function downloadExcel(){
   if(!cloudReady||!db){alert("Primero espera a que el repositorio aparezca como Sincronizado.");return}
   const btn=[...document.querySelectorAll("button")].find(b=>b.textContent.includes("Descargar Excel"));
@@ -180,8 +203,12 @@ async function downloadExcel(){
     if(!updated)throw Error("No se encontraron celdas de estado de los atletas existentes para actualizar.");
 
     zip.file(sheetPath,sheet);
-    const out=await zip.generateAsync({type:"blob",compression:"STORE"});
-    dl(out,"NORMATIVOS_AKC_ACTUALIZADO_"+new Date().toISOString().slice(0,10)+".xlsx");
+    const XLSX_MIME="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const outBlob=await zip.generateAsync({type:"blob",compression:"STORE",mimeType:XLSX_MIME});
+    const outName="NORMATIVOS_AKC_ACTUALIZADO_"+new Date().toISOString().slice(0,10)+".xlsx";
+    const outFile=new File([outBlob],outName,{type:XLSX_MIME,lastModified:Date.now()});
+    const saved=await saveFile(outFile,outName);
+    if(!saved){setSync("ok","Sincronizado");return;}
     setSync("ok","Sincronizado");
     toast("Excel actualizado con los cambios del repositorio");
     console.log("Excel AKC actualizado:",updated,"celdas; no encontradas:",missing,"atletas:",matchedAthletes);
