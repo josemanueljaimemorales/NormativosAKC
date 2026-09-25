@@ -1,56 +1,37 @@
-# ÁGUILAS KC — Repositorio institucional vanguardista
+# ÁGUILAS KC — Repositorio de Normativos
 
-## Archivos que debes subir al mismo nivel en GitHub Pages
+## Archivos en GitHub Pages
+
+Sube estos cuatro archivos al mismo nivel:
 
 - `index.html`
 - `database.json`
 - `NORMATIVOS_AKC.xlsx`
 - `logo.png`
 
-**El logo es opcional:** si existe `logo.png`, aparecerá automáticamente en el encabezado. Si no existe, se mostrará el identificador AKC.
+El `logo.png` es tu logo real y lo puedes agregar manualmente.
+
+## Exportación del Excel
+
+Esta versión **ya no reconstruye el Excel con una librería de hojas de cálculo**.
+
+Al pulsar **Descargar Excel maestro actualizado**, la plataforma:
+
+1. Abre el `NORMATIVOS_AKC.xlsx` original como paquete XLSX.
+2. Localiza la hoja `NORMATIVOS`.
+3. Modifica únicamente los valores de las celdas de etapas.
+4. Vuelve a empaquetar el mismo libro, dejando intactas las demás partes del XLSX.
+
+Por tanto, se conservan los componentes que estaban en el archivo maestro, incluyendo hojas, fórmulas, estilos, combinaciones, validaciones, formato condicional, gráficas y configuración del libro, en lugar de reconstruirlos.
+
+## Flujo
+
+Repositorio → modificar normativos → Descargar Excel maestro actualizado → revisar → reemplazar manualmente en OneDrive.
 
 ## Diseño
 
-Interfaz institucional, sobria y moderna, pensada para celular y computadora:
-- encabezado institucional
-- logo
-- selector de atleta
-- datos de grupo y nivel
-- navegación por aparatos
-- progreso por aparato
-- estados C / EP / P / NA
-- filtros por clasificación y etapa
-- búsqueda
-- cambio individual
-- cambio masivo de todos los elementos visibles
-- impresión
-- descarga del Excel actualizado
-- respaldo/importación JSON
-
-## Flujo de trabajo
-
-1. Sube estos cuatro archivos a GitHub.
-2. Abre GitHub Pages.
-3. Selecciona el atleta.
-4. Selecciona el aparato.
-5. Modifica las etapas directamente en la lista.
-6. Si necesitas, filtra una clasificación y usa el cambio masivo.
-7. Pulsa `Descargar Excel actualizado`.
-8. Descarga `NORMATIVOS_AKC_ACTUALIZADO.xlsx`.
-9. Súbelo manualmente a OneDrive y reemplaza el archivo anterior.
-
-## Nota sobre OneDrive
-
-GitHub Pages no escribe directamente en OneDrive. El flujo queda deliberadamente bajo tu control:
-
-Repositorio → Descargar Excel → Revisar → Reemplazar manualmente en OneDrive.
-
-## Logo
-
-Nombra tu archivo de logo exactamente:
-
-`logo.png`
-
-y colócalo junto a `index.html`.
-
-Recomendación: PNG con fondo transparente, idealmente cuadrado.
+- Logo centrado.
+- ÁGUILAS DE KIDS CENTER.
+- Gimnasia Artística Varonil.
+- Diseño institucional azul marino, dorado y blanco.
+- Adaptado para celular y computadora.
