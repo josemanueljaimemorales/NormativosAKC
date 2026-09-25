@@ -264,55 +264,56 @@ function saveLocal(){
 }
 function downloadJSON(){saveLocal();dl(new Blob([JSON.stringify(db,null,2)],{type:"application/json"}),"AKC_database_actualizada.json")}
 async function downloadExcel(){
- if(!originalBytes){alert("No encuentro NORMATIVOS_AKC.xlsx. Súbelo junto a index.html y database.json.");return}
- if(typeof JSZip==="undefined"){alert("No se cargó el módulo de Excel. Necesitas conexión a internet para generar el archivo.");return}
- try{
-  // Abrimos el XLSX original como ZIP y modificamos únicamente NORMATIVOS.
-  const zip=await JSZip.loadAsync(originalBytes);
-  const workbookXml=await zip.file("xl/workbook.xml").async("string");
-  const relsXml=await zip.file("xl/_rels/workbook.xml.rels").async("string");
-  const rid=(workbookXml.match(/<sheet[^>]*name="NORMATIVOS"[^>]*r:id="([^"]+)"/)||[])[1];
-  if(!rid)throw Error("No se encontró la hoja NORMATIVOS");
-  const relRe=new RegExp('<Relationship[^>]*Id="'+rid+'"[^>]*Target="([^"]+)"[^>]*/>');
-  const target=(relsXml.match(relRe)||[])[1];
-  if(!target)throw Error("No se encontró el archivo XML de NORMATIVOS");
-  const sheetPath=target.startsWith("/")?target.slice(1):"xl/"+target.replace(/^\//,"");
-  let sheetXml=await zip.file(sheetPath).async("string");
-
-  const ssXml=await zip.file("xl/sharedStrings.xml").async("string");
-  const ssMap={};
-  const siRe=/<si>([\s\S]*?)<\/si>/g; let m,idx=0;
-  while((m=siRe.exec(ssXml))){
-    const parts=m[1].match(/<t[^>]*>([\s\S]*?)<\/t>/g)||[];
-    const value=parts.map(x=>x.replace(/<[^>]+>/g,"")).join("");
-    if(ssMap[value]===undefined)ssMap[value]=idx;
-    idx++;
-  }
-  const stateIndex={C:ssMap["Consolidado"],EP:ssMap["En proceso"],P:ssMap["Proyección"],NA:ssMap["N/A"]};
-  if(Object.values(stateIndex).some(v=>v===undefined))throw Error("Faltan estados en sharedStrings del Excel maestro");
-
-  function colLetters(n){let s="";n++;while(n){let r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26)}return s}
-  const colMap={};db.athletes.forEach((a,i)=>colMap[a.name]=colLetters(i+2));
-  const changes=[];
-  db.items.forEach(item=>Object.entries(item.status).forEach(([name,code])=>{
-    const col=colMap[name]; if(!col||stateIndex[code]===undefined)return;
-    changes.push({coord:col+item.row,index:stateIndex[code]});
-  }));
-
-  changes.forEach(({coord,index})=>{
-    const esc=coord.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-    const re=new RegExp('<c\\b([^>]*\\br="'+esc+'"[^>]*)>([\\s\\S]*?)</c>|<c\\b([^>]*\\br="'+esc+'"[^>]*)\\s*/>');
-    const match=sheetXml.match(re); if(!match)return;
-    const attrs=(match[1]||match[3]||"").replace(/\s+t="[^"]*"/g,"");
-    const replacement='<c'+attrs+' t="s"><v>'+index+'</v></c>';
-    sheetXml=sheetXml.replace(re,replacement);
+  if(!originalBytes){alert("No encuentro NORMATIVOS_AKC.xlsx. Súbelo junto a index.html y database.json.");return}
+  loadJSZip().then(async()=>{
+    try{
+      const zip=await JSZip.loadAsync(originalBytes);
+      const wbXml=await zip.file("xl/workbook.xml").async("string");
+      const relXml=await zip.file("xl/_rels/workbook.xml.rels").async("string");
+      const sm=wbXml.match(/<sheet\b[^>]*name="NORMATIVOS"[^>]*r:id="([^"]+)"/i);
+      if(!sm)throw Error("No se encontró la hoja NORMATIVOS.");
+      const rm=relXml.match(new RegExp('<Relationship\\b[^>]*Id="'+escapeRegExp(sm[1])+'"[^>]*Target="([^"]+)"','i'));
+      if(!rm)throw Error("No se encontró el XML de la hoja NORMATIVOS.");
+      let target=rm[1].replace(/^\/+/,"").replace(/^xl\//,"").replace(/^\.?\//,"");
+      const sheetPath="xl/"+target;
+      let xml=await zip.file(sheetPath).async("string");
+      const colMap={};db.athletes.forEach((a,i)=>colMap[a.name]=i+2);
+      db.items.forEach(item=>Object.entries(item.status||{}).forEach(([name,code])=>{
+        const c=colMap[name];if(c===undefined)return;
+        const ref=XLSX.utils.encode_cell({r:item.row-1,c:c});
+        const val=code==="C"?"Consolidado":code==="EP"?"En proceso":code==="P"?"Proyección":"N/A";
+        xml=setCellSharedString(xml,ref,val);
+      }));
+      zip.file(sheetPath,xml);
+      const out=await zip.generateAsync({type:"blob",compression:"STORE",mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+      const url=URL.createObjectURL(out),a=document.createElement("a");
+      a.href=url;a.download="NORMATIVOS_AKC_ACTUALIZADO.xlsx";a.style.display="none";
+      document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),5000);
+      toast("Excel descargado correctamente");
+    }catch(e){console.error(e);alert("No se pudo generar el Excel: "+e.message)}
   });
-  zip.file(sheetPath,sheetXml);
-  const out=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});
-  dl(out,"NORMATIVOS_AKC_ACTUALIZADO.xlsx");
-  toast("Excel actualizado: se conservó el libro maestro");
- }catch(e){console.error(e);alert("No se pudo generar el Excel conservando el formato original: "+e.message)}
 }
+function loadJSZip(){
+  if(window.JSZip)return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
+    s.onload=resolve;s.onerror=()=>reject(new Error("No se pudo cargar el módulo de Excel."));
+    document.head.appendChild(s);
+  });
+}
+function setCellSharedString(xml,ref,value){
+  const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
+  const v=esc(value);
+  const re=new RegExp('<c\\b([^>]*\\br="'+escapeRegExp(ref)+'"[^>]*)>([\\s\\S]*?)</c>','i');
+  if(re.test(xml)){
+    return xml.replace(re,(m,attrs)=>'<c'+attrs.replace(/\s+t="[^"]*"/i,'')+' t="inlineStr"><is><t>'+v+'</t></is></c>');
+  }
+  return xml;
+}
+function escapeRegExp(s){return String(s).replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}
+
 function importJSON(ev){
  const f=ev.target.files[0];if(!f)return;const r=new FileReader();
  r.onload=()=>{try{const x=JSON.parse(r.result);if(!x.items||!x.athletes)throw Error("JSON no válido");db=x;saveLocal();renderAthletes();selectAthlete(db.athletes[0].name);toast("Base importada")}catch(e){alert(e.message)}};r.readAsText(f)

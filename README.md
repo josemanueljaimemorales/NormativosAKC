@@ -35,3 +35,7 @@ Repositorio → modificar normativos → Descargar Excel maestro actualizado →
 - Gimnasia Artística Varonil.
 - Diseño institucional azul marino, dorado y blanco.
 - Adaptado para celular y computadora.
+
+
+### Descarga de Excel
+La descarga genera explícitamente `NORMATIVOS_AKC_ACTUALIZADO.xlsx` con el MIME oficial de Excel. No debe descargarse ni mostrarse como una carpeta ZIP.
