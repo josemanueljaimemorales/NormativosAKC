@@ -83,7 +83,11 @@ async function deleteAthlete(){const n=document.getElementById("deleteName").tex
 function openAdmin(){document.getElementById("adminModal").classList.add("show")}
 function closeModal(id){document.getElementById(id).classList.remove("show")}
 async function saveFile(blob,name){
-  if(window.showSaveFilePicker){
+  // En Android/Samsung Browser NO usamos showSaveFilePicker: puede crear un
+  // archivo MTP de 0 B además de la descarga real. La descarga estándar
+  // genera un único .xlsx y Android lo reconoce como Excel.
+  const isAndroid=/Android/i.test(navigator.userAgent||"");
+  if(!isAndroid && window.showSaveFilePicker){
     try{
       const handle=await window.showSaveFilePicker({
         suggestedName:name,
@@ -100,9 +104,9 @@ async function saveFile(blob,name){
     }
   }
   const u=URL.createObjectURL(blob),a=document.createElement("a");
-  a.href=u;a.download=name;a.type=blob.type||"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  a.href=u;a.download=name;a.type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   a.style.display="none";document.body.appendChild(a);a.click();
-  setTimeout(()=>{a.remove();URL.revokeObjectURL(u)},3000);
+  setTimeout(()=>{a.remove();URL.revokeObjectURL(u)},5000);
   return true;
 }
 function dl(blob,name){return saveFile(blob,name)}
