@@ -95,7 +95,7 @@ tr:last-child td{border-bottom:0}
    <div id="logoBox" class="logo fallback">AKC</div>
    <div class="brand">
      <h1>ÁGUILAS DE KIDS CENTER</h1>
-     <p>Repositorio institucional de normativos · Gimnasia Artística Varonil</p>
+     <p>Gimnasia Artística Varonil</p>
    </div>
    <div class="topactions">
      <button onclick="window.print()">Imprimir</button>
@@ -280,7 +280,7 @@ async function downloadExcel(){
       const colMap={};db.athletes.forEach((a,i)=>colMap[a.name]=i+2);
       db.items.forEach(item=>Object.entries(item.status||{}).forEach(([name,code])=>{
         const c=colMap[name];if(c===undefined)return;
-        const ref=XLSX.utils.encode_cell({r:item.row-1,c:c});
+        const ref=excelCellRef(item.row-1,c);
         const val=code==="C"?"Consolidado":code==="EP"?"En proceso":code==="P"?"Proyección":"N/A";
         xml=setCellSharedString(xml,ref,val);
       }));
@@ -302,6 +302,12 @@ function loadJSZip(){
     s.onload=resolve;s.onerror=()=>reject(new Error("No se pudo cargar el módulo de Excel."));
     document.head.appendChild(s);
   });
+}
+
+function excelCellRef(row,col){
+  let n=col+1, letters="";
+  while(n>0){ const r=(n-1)%26; letters=String.fromCharCode(65+r)+letters; n=Math.floor((n-1)/26); }
+  return letters+(row+1);
 }
 function setCellSharedString(xml,ref,value){
   const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
