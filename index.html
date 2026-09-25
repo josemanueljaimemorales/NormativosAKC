@@ -90,11 +90,11 @@ async function downloadExcel(){
     const resp=await fetch("NORMATIVOS_AKC.xlsx",{cache:"no-store"});
     if(!resp.ok)throw Error("No se encontró la plantilla NORMATIVOS_AKC.xlsx junto al repositorio.");
     const zip=await JSZip.loadAsync(await resp.arrayBuffer());
-    const colLetters=n=>{let s="";while(n){let r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26)}return s};
+    const colLetters=n=>{let s="";while(n){const rem=(n-1)%26;s=String.fromCharCode(65+rem)+s;n=Math.floor((n-1)/26)}return s};
     const colNum=s=>{let n=0;for(const ch of s)n=n*26+ch.charCodeAt(0)-64;return n};
     const escXml=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-    const getCell=(row,col,r)=>{const re=new RegExp('<c\\s+r="'+col+r+'"[^>]*>.*?</c>|<c\\s+r="'+col+r+'"[^>]*/>','s');const m=row.match(re);return m?m[0]:null};
-    const replaceCell=(row,col,r,newCell)=>{const re=new RegExp('<c\\s+r="'+col+r+'"[^>]*>.*?</c>|<c\\s+r="'+col+r+'"[^>]*/>','s');return re.test(row)?row.replace(re,newCell):row.replace('</row>',newCell+'</row>')};
+    const getCell=(row,col,rowNum)=>{const re=new RegExp('<c\\s+r="'+col+rowNum+'"[^>]*>.*?</c>|<c\\s+r="'+col+rowNum+'"[^>]*/>','s');const m=row.match(re);return m?m[0]:null};
+    const replaceCell=(row,col,rowNum,newCell)=>{const re=new RegExp('<c\\s+r="'+col+rowNum+'"[^>]*>.*?</c>|<c\\s+r="'+col+rowNum+'"[^>]*/>','s');return re.test(row)?row.replace(re,newCell):row.replace('</row>',newCell+'</row>')};
     const setInline=(cell,value)=>cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"").replace(/<c\s+/,'<c t="inlineStr" ').replace('</c>','<is><t>'+escXml(value)+'</t></is></c>');
     const setShared=(cell,index)=>cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"").replace(/<c\s+/,'<c t="s" ').replace('</c>','<v>'+index+'</v></c>');
     const shiftRef=ref=>ref.replace(/([A-Z]+)(\d+)/g,(m,c,r)=>colNum(c)>=3?colLetters(colNum(c)+1)+r:m);
@@ -147,7 +147,7 @@ async function downloadExcel(){
       rows1.set(r,row);
     }
     s1=s1.replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+[...rows1.keys()].sort((a,b)=>a-b).map(r=>rows1.get(r)).join('')+'</sheetData>');
-    s1=s1.replace(/(<mergeCell ref=")([^"]+)(")/g,(m,a,r,b)=>a+shiftRef(r)+b).replace(/(<dimension ref=")([^"]+)(")/g,(m,a,r,b)=>a+shiftRef(r)+b).replace('sqref="C3:AF279"','sqref="C3:'+colLetters(newLast)+'279"');
+    s1=s1.replace(/(<mergeCell ref=")([^"]+)(")/g,(m,a,ref,b)=>a+shiftRef(ref)+b).replace(/(<dimension ref=")([^"]+)(")/g,(m,a,ref,b)=>a+shiftRef(ref)+b).replace('sqref="C3:AF279"','sqref="C3:'+colLetters(newLast)+'279"');
     const cm=s1.match(/<cols>(.*?)<\/cols>/s);if(cm){const cols=[...cm[1].matchAll(/<col\s+[^>]*\/>/g)].map(m=>m[0]);const out=[];let template=null;for(const c of cols){const mn=Number((c.match(/min="(\d+)"/)||[])[1]),mx=Number((c.match(/max="(\d+)"/)||[])[1]);if(mn===3&&mx===3)template=c;if(mx>=3){let x=c;if(mn>=3)x=x.replace(/min="\d+"/,'min="'+(mn+1)+'"');x=x.replace(/max="\d+"/,'max="'+(mx+1)+'"');out.push(x)}else out.push(c)}if(template)out.splice(2,0,template.replace(/min="3" max="3"/,'min="3" max="3"'));s1=s1.slice(0,cm.index+6)+out.join('')+s1.slice(cm.index+6+cm[1].length)}
     zip.file("xl/worksheets/sheet1.xml",s1);
 
@@ -159,7 +159,7 @@ async function downloadExcel(){
 
     // FICHA DEL ATLETA: extend every athlete/status range and select the athlete used in the repository.
     let s2=await zip.file("xl/worksheets/sheet2.xml").async("string");
-    s2=s2.replace(/\$C\$(\d+):\$AF\$(\d+)/g,'$C$$1:$AG$$2').replaceAll('$C$1:$AF$1','$C$1:$AG$1').replaceAll('$A$4:$A$33','$A$4:$A$'+(3+ordered.length)).replaceAll('$B$4:$B$33','$B$4:$B$'+(3+ordered.length));
+    s2=s2.replace(/\$C\$(\d+):\$AF\$(\d+)/g,(_,a,b)=>'$C$'+a+':$AG$'+b).replaceAll('$C$1:$AF$1','$C$1:$AG$1').replaceAll('$A$4:$A$33','$A$4:$A$'+(3+ordered.length)).replaceAll('$B$4:$B$33','$B$4:$B$'+(3+ordered.length));
     const selected=document.getElementById("athlete")?.value||ordered[0]?.name||"";let rr3=(s2.match(/<row r="3".*?<\/row>/s)||[])[0];if(rr3){const b=getCell(rr3,'B',3);if(b)rr3=replaceCell(rr3,'B',3,setInline(b,selected));s2=s2.replace(/<row r="3".*?<\/row>/s,rr3)}zip.file("xl/worksheets/sheet2.xml",s2);
 
     // INDICADORES
