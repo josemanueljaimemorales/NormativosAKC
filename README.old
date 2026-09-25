@@ -1,0 +1,19 @@
+# AKC Repositorio — versión Excel V7
+
+Repositorio de Normativos AKC con Firebase como fuente central de datos.
+
+## Excel
+
+El botón **Descargar Excel** genera un archivo nuevo a partir de la plantilla `NORMATIVOS_AKC.xlsx` y de los datos actuales del repositorio en Firebase.
+
+La plantilla incluida es la versión corregida del respaldo `NORMATIVOS_AKC_RESPALDO_2026-09-25_CORREGIDO.xlsx`.
+
+El generador:
+- coloca un atleta nuevo al inicio del bloque, en la columna C;
+- conserva los atletas existentes y sus columnas/formato;
+- inicializa los normativos nuevos como N/A;
+- actualiza Ficha del Atleta, Indicadores y Consolidado;
+- fuerza el recálculo de Excel;
+- valida que no existan referencias de celda duplicadas antes de descargar.
+
+Firebase continúa siendo la fuente de verdad; el Excel es un documento generado para respaldo, impresión y almacenamiento en OneDrive.
