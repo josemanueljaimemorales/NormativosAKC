@@ -1,41 +1,19 @@
-# ÁGUILAS KC — Repositorio de Normativos
+# AKC Repositorio de Normativos — Firebase
 
-## Archivos en GitHub Pages
+Esta versión usa Firebase Firestore como base central para que los cambios se compartan entre celulares, tablets y computadoras.
 
-Sube estos cuatro archivos al mismo nivel:
+## Firebase
+- Proyecto: `akc-con-reporte`
+- Colección: `normativosAKC`
+- Documento principal: `estado`
 
-- `index.html`
-- `database.json`
-- `NORMATIVOS_AKC.xlsx`
-- `logo.png`
+La primera vez, si el documento no existe, la aplicación carga `database.json` y lo publica en Firestore.
 
-El `logo.png` es tu logo real y lo puedes agregar manualmente.
+## Importante
+El generador de Excel está temporalmente desactivado en esta versión para evitar volver a producir archivos dañados. El Excel original se conserva como plantilla. Primero se valida la sincronización central; después se integra un generador seguro.
 
-## Exportación del Excel
+## Publicación
+Subir a GitHub Pages los archivos del ZIP. `database.json` y `NORMATIVOS_AKC.xlsx` deben permanecer junto a `index.html`.
 
-Esta versión **ya no reconstruye el Excel con una librería de hojas de cálculo**.
-
-Al pulsar **Descargar Excel maestro actualizado**, la plataforma:
-
-1. Abre el `NORMATIVOS_AKC.xlsx` original como paquete XLSX.
-2. Localiza la hoja `NORMATIVOS`.
-3. Modifica únicamente los valores de las celdas de etapas.
-4. Vuelve a empaquetar el mismo libro, dejando intactas las demás partes del XLSX.
-
-Por tanto, se conservan los componentes que estaban en el archivo maestro, incluyendo hojas, fórmulas, estilos, combinaciones, validaciones, formato condicional, gráficas y configuración del libro, en lugar de reconstruirlos.
-
-## Flujo
-
-Repositorio → modificar normativos → Descargar Excel maestro actualizado → revisar → reemplazar manualmente en OneDrive.
-
-## Diseño
-
-- Logo centrado.
-- ÁGUILAS DE KIDS CENTER.
-- Gimnasia Artística Varonil.
-- Diseño institucional azul marino, dorado y blanco.
-- Adaptado para celular y computadora.
-
-
-### Descarga de Excel
-La descarga genera explícitamente `NORMATIVOS_AKC_ACTUALIZADO.xlsx` con el MIME oficial de Excel. No debe descargarse ni mostrarse como una carpeta ZIP.
+## Firestore
+Las reglas del proyecto Firebase deben permitir lectura y escritura de la colección `normativosAKC` para los usuarios que vayan a operar el repositorio. Si las reglas actuales no lo permiten, hay que ajustarlas en Firebase Console.
