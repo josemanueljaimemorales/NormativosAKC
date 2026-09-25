@@ -1,9 +1,22 @@
-# AKC Repositorio — Paso 1
+# AKC Repositorio de Normativos — Firebase
 
-Esta versión conserva la plataforma Firebase existente y cambia únicamente el botón **Descargar Excel**.
+Esta versión usa Firebase Firestore como base central para que los cambios se compartan entre celulares, tablets y computadoras.
 
-En este primer paso, el botón descarga una copia byte a byte del Excel maestro `NORMATIVOS_AKC.xlsx`, sin modificar hojas, fórmulas, estilos ni estructura.
+## Firebase
+- Proyecto: `akc-con-reporte`
+- Colección: `normativosAKC`
+- Documento principal: `estado`
 
-El objetivo es validar primero el flujo de descarga con el Excel maestro funcional. Firebase continúa siendo la fuente central de datos del repositorio.
+La primera vez, si el documento no existe, la aplicación carga `database.json` y lo publica en Firestore.
 
-La integración de los datos de Firebase dentro del Excel se hará en el siguiente paso, después de validar esta descarga limpia.
+## Importante
+El generador de Excel está temporalmente desactivado en esta versión para evitar volver a producir archivos dañados. El Excel original se conserva como plantilla. Primero se valida la sincronización central; después se integra un generador seguro.
+
+## Publicación
+Subir a GitHub Pages los archivos del ZIP. `database.json` y `NORMATIVOS_AKC.xlsx` deben permanecer junto a `index.html`.
+
+## Firestore
+Las reglas del proyecto Firebase deben permitir lectura y escritura de la colección `normativosAKC` para los usuarios que vayan a operar el repositorio. Si las reglas actuales no lo permiten, hay que ajustarlas en Firebase Console.
+
+## Excel V3
+Se corrigió la referencia de fila que provocaba el error "r is not defined" en la generación de Excel.
