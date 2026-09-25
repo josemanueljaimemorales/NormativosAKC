@@ -16,6 +16,7 @@
 </style>
 <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
 <header class="top"><div class="topin">
@@ -81,7 +82,40 @@ async function deleteAthlete(){const n=document.getElementById("deleteName").tex
 function openAdmin(){document.getElementById("adminModal").classList.add("show")}
 function closeModal(id){document.getElementById(id).classList.remove("show")}
 function dl(blob,name){const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1500)}
-function downloadExcel(){alert("La descarga de Excel está temporalmente desactivada mientras terminamos el generador seguro. No se generará un archivo dañado.")}
+async function downloadExcel(){
+  if(!db||!cloudReady){alert("Primero espera a que el repositorio aparezca como Sincronizado.");return}
+  const btn=[...document.querySelectorAll("button")].find(b=>b.textContent.includes("Descargar Excel"));
+  if(btn)btn.disabled=true; setSync("busy","Generando Excel…");
+  try{
+    const resp=await fetch("NORMATIVOS_AKC.xlsx",{cache:"no-store"});
+    if(!resp.ok)throw Error("No se encontró la plantilla NORMATIVOS_AKC.xlsx junto al repositorio.");
+    const zip=await JSZip.loadAsync(await resp.arrayBuffer());
+    const sheetFile=zip.file("xl/worksheets/sheet1.xml");
+    if(!sheetFile)throw Error("La plantilla no contiene la hoja NORMATIVOS.");
+    let xml=await sheetFile.async("string");
+    const statusIndex={C:33,EP:303,P:34,NA:299};
+    const colLetters=n=>{let s="";while(n){let r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26)}return s};
+    let changed=0;
+    for(const athlete of db.athletes){
+      const col=Number(athlete.column);
+      if(!col||col<3||col>32)continue;
+      const letter=colLetters(col);
+      for(const item of db.items){
+        const value=statusIndex[item.status?.[athlete.name]||"NA"]??299;
+        const cell=letter+Number(item.row);
+        const re=new RegExp('(<c\\s+r="'+cell+'"[^>]*\\bt="s"[^>]*>\\s*<v>)[^<]*(</v>\\s*</c>)');
+        if(re.test(xml)){xml=xml.replace(re,'$1'+value+'$2');changed++}
+      }
+    }
+    if(changed===0)throw Error("No se encontraron celdas de normativos para actualizar.");
+    zip.file("xl/worksheets/sheet1.xml",xml);
+    const out=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6},mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const stamp=new Date().toISOString().slice(0,10);
+    dl(out,"NORMATIVOS_AKC_RESPALDO_"+stamp+".xlsx");
+    setSync("ok","Sincronizado");toast("Excel generado correctamente");
+  }catch(e){console.error(e);setSync("ok","Sincronizado");alert("No se pudo generar el Excel: "+e.message)}
+  finally{if(btn)btn.disabled=false}
+}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function toast(s){const t=document.getElementById("toast");t.textContent=s;t.style.display="block";clearTimeout(window.__t);window.__t=setTimeout(()=>t.style.display="none",1800)}
 init();
