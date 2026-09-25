@@ -17,3 +17,6 @@ Subir a GitHub Pages los archivos del ZIP. `database.json` y `NORMATIVOS_AKC.xls
 
 ## Firestore
 Las reglas del proyecto Firebase deben permitir lectura y escritura de la colección `normativosAKC` para los usuarios que vayan a operar el repositorio. Si las reglas actuales no lo permiten, hay que ajustarlas en Firebase Console.
+
+## Excel V3
+Se corrigió la referencia de fila que provocaba el error "r is not defined" en la generación de Excel.

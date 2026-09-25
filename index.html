@@ -51,6 +51,7 @@
 <div id="deleteModal" class="modal"><div class="modalbox"><h3>Eliminar atleta definitivamente</h3><p>Esta acción no se puede deshacer.</p><div class="dangerbox">Se eliminará <strong id="deleteName">—</strong> del repositorio central y de sus evaluaciones.</div><div style="margin-top:12px"><label>Escribe exactamente el nombre del atleta</label><input id="confirmDelete" oninput="checkDelete()"></div><div class="modalactions"><button class="btn light" onclick="closeModal('deleteModal')">Cancelar</button><button id="deleteBtn" class="btn red" disabled onclick="deleteAthlete()">Eliminar definitivamente</button></div></div></div>
 <div id="adminModal" class="modal"><div class="modalbox"><h3>Administración</h3><p>Funciones de mantenimiento del repositorio.</p><div class="adminrow"><button class="btn primary" onclick="closeModal('adminModal');openAdd()">＋ Agregar atleta</button><button class="btn red" onclick="closeModal('adminModal');openDelete()">🗑 Eliminar atleta</button></div><div class="adminrow"><button class="btn light" onclick="downloadJSON()">Descargar respaldo JSON</button><button class="btn light" onclick="document.getElementById('jsonFile').click();closeModal('adminModal')">Restaurar JSON</button></div><div class="notice">La base central es Firebase. Restaurar un JSON reemplaza el estado central después de confirmación.</div><div class="modalactions"><button class="btn light" onclick="closeModal('adminModal')">Cerrar</button></div></div></div>
 <script>
+
 const firebaseConfig={apiKey:"AIzaSyBNRAkDXLlw5fyiT01-ZfUyB0A7ShsAxyg",authDomain:"akc-con-reporte.firebaseapp.com",projectId:"akc-con-reporte"};
 firebase.initializeApp(firebaseConfig);const cloudDb=firebase.firestore();const COLLECTION="normativosAKC",DOC="estado";
 const APPS=["PISO","ARZON","ANILLOS","SALTO DE CABALLO","BARRAS PARALELAS","BARRA FIJA"],appLabels={"PISO":"Piso","ARZON":"Arzón","ANILLOS":"Anillos","SALTO DE CABALLO":"Salto","BARRAS PARALELAS":"Paralelas","BARRA FIJA":"Barra fija"};
@@ -83,6 +84,7 @@ function openAdmin(){document.getElementById("adminModal").classList.add("show")
 function closeModal(id){document.getElementById(id).classList.remove("show")}
 function dl(blob,name){const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1500)}
 async function downloadExcel(){
+  window.__excelGeneratorVersion="V3";
   if(!db||!cloudReady){alert("Primero espera a que el repositorio aparezca como Sincronizado.");return}
   const btn=[...document.querySelectorAll("button")].find(b=>b.textContent.includes("Descargar Excel"));
   if(btn)btn.disabled=true;setSync("busy","Generando Excel…");
@@ -97,7 +99,7 @@ async function downloadExcel(){
     const replaceCell=(row,col,rowNum,newCell)=>{const re=new RegExp('<c\\s+r="'+col+rowNum+'"[^>]*>.*?</c>|<c\\s+r="'+col+rowNum+'"[^>]*/>','s');return re.test(row)?row.replace(re,newCell):row.replace('</row>',newCell+'</row>')};
     const setInline=(cell,value)=>cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"").replace(/<c\s+/,'<c t="inlineStr" ').replace('</c>','<is><t>'+escXml(value)+'</t></is></c>');
     const setShared=(cell,index)=>cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"").replace(/<c\s+/,'<c t="s" ').replace('</c>','<v>'+index+'</v></c>');
-    const shiftRef=ref=>ref.replace(/([A-Z]+)(\d+)/g,(m,c,r)=>colNum(c)>=3?colLetters(colNum(c)+1)+r:m);
+    const shiftRef=ref=>ref.replace(/([A-Z]+)(\d+)/g,(m,c,rowNumRef)=>colNum(c)>=3?colLetters(colNum(c)+1)+rowNumRef:m);
     const statusIndex={C:33,EP:303,P:34,NA:299};
 
     let s1=await zip.file("xl/worksheets/sheet1.xml").async("string");
@@ -106,7 +108,7 @@ async function downloadExcel(){
     const rows1=new Map();for(const m of s1.matchAll(/<row r="(\d+)".*?<\/row>/gs))rows1.set(Number(m[1]),m[0]);
     const originalRows=new Map(rows1);
     const originalC=new Map(),originalStyle=new Map();
-    for(const [r,row] of originalRows){const c=getCell(row,"C",r);if(c)originalC.set(r,c);for(const m of row.matchAll(/<c\s+r="([A-Z]+)(\d+)"([^>]*)>/g)){const sid=(m[3].match(/\bs="(\d+)"/)||[])[1];if(sid)originalStyle.set(r+"|"+m[1],sid)}}
+    for(const [rowNum,row] of originalRows){const c=getCell(row,"C",rowNum);if(c)originalC.set(rowNum,c);for(const m of row.matchAll(/<c\s+r="([A-Z]+)(\d+)"([^>]*)>/g)){const sid=(m[3].match(/\bs="(\d+)"/)||[])[1];if(sid)originalStyle.set(rowNum+"|"+m[1],sid)}}
     const row1=originalRows.get(1);const originalNames=[];
     for(let c=3;c<=32;c++){const cell=getCell(row1,colLetters(c),1);if(cell){const vm=cell.match(/<v>(\d+)<\/v>/);originalNames.push(vm?(ssVals[Number(vm[1])]||""):"")}}
     const originalSet=new Set(originalNames.filter(Boolean));
@@ -119,42 +121,42 @@ async function downloadExcel(){
     const newLast=2+maxAth;
 
     // True insertion at column C: move existing cells C:AO one column right, but preserve the visual style of each destination column.
-    for(const [r0,row0] of originalRows){
+    for(const [rowNum0,row0] of originalRows){
       let row=row0;
       row=row.replace(/<c\s+r="([A-Z]+)(\d+)"[^>]*>.*?<\/c>|<c\s+r="([A-Z]+)(\d+)"[^>]\/>/gs,(full,c1,r1,c2,r2)=>{
         const oldc=c1||c2,rr=Number(r1||r2),n=colNum(oldc);if(n<3)return full;
         const newc=colLetters(n+1),sid=originalStyle.get(rr+"|"+newc);let cell=full.replace(new RegExp('r="'+oldc+rr+'"'), 'r="'+newc+rr+'"');if(sid)cell=cell.replace(/\bs="\d+"/, 's="'+sid+'"');return cell;
       });
       row=row.replace(/spans="1:(\d+)"/g,(m,n)=>'spans="1:'+Number(n+1)+'"');
-      rows1.set(r,row);
+      rows1.set(rowNum0,row);
     }
     // Rebuild the complete athlete block so the new athlete(s) are at C and every existing athlete keeps the destination column's original style.
-    for(const [r,row0] of originalRows){
-      if(r!==1&&!itemByRow.has(r))continue;
-      let row=rows1.get(r)||row0;
+    for(const [rowNum,row0] of originalRows){
+      if(rowNum!==1&&!itemByRow.has(rowNum))continue;
+      let row=rows1.get(rowNum)||row0;
       for(let i=0;i<maxAth;i++){
         const outCol=colLetters(3+i);
-        let cell=originalC.get(r);if(!cell)continue;
+        let cell=originalC.get(rowNum);if(!cell)continue;
         // Style comes from the original destination column when it existed; for new columns beyond AF use AF's style.
         const sourceStyleCol=(3+i)<=32?colLetters(3+i):"AF";
-        const sid=originalStyle.get(r+"|"+sourceStyleCol);if(sid)cell=cell.replace(/\bs="\d+"/,'s="'+sid+'"');
+        const sid=originalStyle.get(rowNum+"|"+sourceStyleCol);if(sid)cell=cell.replace(/\bs="\d+"/,'s="'+sid+'"');
         cell=cell.replace(new RegExp('r="C'+r+'"'),'r="'+outCol+r+'"');
-        if(r===1){if(i<ordered.length)cell=setInline(cell,ordered[i].name);else cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"");}
-        else if(i<ordered.length){const st=itemByRow.get(r)?.status?.[ordered[i].name]||"NA";cell=setShared(cell,statusIndex[st]??statusIndex.NA)}
+        if(rowNum===1){if(i<ordered.length)cell=setInline(cell,ordered[i].name);else cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"");}
+        else if(i<ordered.length){const st=itemByRow.get(rowNum)?.status?.[ordered[i].name]||"NA";cell=setShared(cell,statusIndex[st]??statusIndex.NA)}
         else{cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"")}
-        row=replaceCell(row,outCol,r,cell);
+        row=replaceCell(row,outCol,rowNum,cell);
       }
-      rows1.set(r,row);
+      rows1.set(rowNum0,row);
     }
-    s1=s1.replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+[...rows1.keys()].sort((a,b)=>a-b).map(r=>rows1.get(r)).join('')+'</sheetData>');
+    s1=s1.replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+[...rows1.keys()].sort((a,b)=>a-b).map(rowNum=>rows1.get(rowNum)).join('')+'</sheetData>');
     s1=s1.replace(/(<mergeCell ref=")([^"]+)(")/g,(m,a,ref,b)=>a+shiftRef(ref)+b).replace(/(<dimension ref=")([^"]+)(")/g,(m,a,ref,b)=>a+shiftRef(ref)+b).replace('sqref="C3:AF279"','sqref="C3:'+colLetters(newLast)+'279"');
     const cm=s1.match(/<cols>(.*?)<\/cols>/s);if(cm){const cols=[...cm[1].matchAll(/<col\s+[^>]*\/>/g)].map(m=>m[0]);const out=[];let template=null;for(const c of cols){const mn=Number((c.match(/min="(\d+)"/)||[])[1]),mx=Number((c.match(/max="(\d+)"/)||[])[1]);if(mn===3&&mx===3)template=c;if(mx>=3){let x=c;if(mn>=3)x=x.replace(/min="\d+"/,'min="'+(mn+1)+'"');x=x.replace(/max="\d+"/,'max="'+(mx+1)+'"');out.push(x)}else out.push(c)}if(template)out.splice(2,0,template.replace(/min="3" max="3"/,'min="3" max="3"'));s1=s1.slice(0,cm.index+6)+out.join('')+s1.slice(cm.index+6+cm[1].length)}
     zip.file("xl/worksheets/sheet1.xml",s1);
 
     // CONSOLIDADO: new athletes are rows 4,5,...; existing athletes follow. All formulas point to the shifted NORMATIVOS columns.
     let s4=await zip.file("xl/worksheets/sheet4.xml").async("string");
-    const oldRows4=new Map();for(const m of s4.matchAll(/<row r="(\d+)".*?<\/row>/gs))oldRows4.set(Number(m[1]),m[0]);const template4=oldRows4.get(4);let keep4=[...oldRows4].filter(([r])=>r<4).map(x=>x[1]);
-    for(let i=0;i<ordered.length;i++){const r=4+i,col=colLetters(3+i);let row=template4.replace('<row r="4"','<row r="'+r+'"').replace(/r="([A-Z]+)4"/g,(m,c)=>'r="'+c+r+'"');row=replaceCell(row,'A',r,setInline(getCell(row,'A',r),ordered[i].name));const fs={B:'COUNTA(NORMATIVOS!'+col+'3:'+col+'279)',C:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"Consolidado")',D:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"En proceso")',E:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"Proyección")',F:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"N/A")',G:'IFERROR(C'+r+'/(B'+r+'-F'+r+'),0)',H:'IF(G'+r+'>=0.8,"Alto avance",IF(G'+r+'>=0.5,"Avance medio",IF(G'+r+'>=0.3,"Avance inicial",IF(G'+r+'>=0.1,"Base solida","Base inicial"))))'};for(const [cc,f] of Object.entries(fs)){let cell=getCell(row,cc,r);cell=cell.replace(/<f[^>]*>.*?<\/f>/s,'<f>'+escXml(f)+'</f>').replace(/<v>.*?<\/v>/s,'<v></v>');row=replaceCell(row,cc,r,cell)}keep4.push(row)}
+    const oldRows4=new Map();for(const m of s4.matchAll(/<row r="(\d+)".*?<\/row>/gs))oldRows4.set(Number(m[1]),m[0]);const template4=oldRows4.get(4);let keep4=[...oldRows4].filter(([rowNum])=>rowNum<4).map(x=>x[1]);
+    for(let i=0;i<ordered.length;i++){const rowNum=4+i,col=colLetters(3+i);let row=template4.replace('<row r="4"','<row r="'+rowNum+'"').replace(/r="([A-Z]+)4"/g,(m,c)=>'r="'+c+rowNum+'"');row=replaceCell(row,'A',rowNum,setInline(getCell(row,'A',rowNum),ordered[i].name));const fs={B:'COUNTA(NORMATIVOS!'+col+'3:'+col+'279)',C:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"Consolidado")',D:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"En proceso")',E:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"Proyección")',F:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"N/A")',G:'IFERROR(C'+rowNum+'/(B'+rowNum+'-F'+rowNum+'),0)',H:'IF(G'+rowNum+'>=0.8,"Alto avance",IF(G'+rowNum+'>=0.5,"Avance medio",IF(G'+rowNum+'>=0.3,"Avance inicial",IF(G'+rowNum+'>=0.1,"Base solida","Base inicial"))))'};for(const [cc,f] of Object.entries(fs)){let cell=getCell(row,cc,rowNum);cell=cell.replace(/<f[^>]*>.*?<\/f>/s,'<f>'+escXml(f)+'</f>').replace(/<v>.*?<\/v>/s,'<v></v>');row=replaceCell(row,cc,rowNum,cell)}keep4.push(row)}
     s4=s4.replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+keep4.join('')+'</sheetData>').replace(/<dimension ref="[^"]+"/,'<dimension ref="A1:H'+(3+ordered.length)+'"');zip.file("xl/worksheets/sheet4.xml",s4);
 
     // FICHA DEL ATLETA: extend every athlete/status range and select the athlete used in the repository.
@@ -172,5 +174,6 @@ async function downloadExcel(){
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function toast(s){const t=document.getElementById("toast");t.textContent=s;t.style.display="block";clearTimeout(window.__t);window.__t=setTimeout(()=>t.style.display="none",1800)}
 init();
+
 </script>
 </body></html>
