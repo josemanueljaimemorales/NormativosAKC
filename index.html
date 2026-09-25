@@ -89,14 +89,11 @@ async function downloadExcel(){
   if(btn)btn.disabled=true;
   setSync("busy","Preparando Excel…");
   try{
-    const url="NORMATIVOS_AKC.xlsx?v="+Date.now();
-    const resp=await fetch(url,{cache:"no-store"});
+    const resp=await fetch("NORMATIVOS_AKC.xlsx?v="+Date.now(),{cache:"no-store"});
     if(!resp.ok)throw Error("No se encontró la plantilla maestra NORMATIVOS_AKC.xlsx junto al repositorio.");
     const bytes=await resp.arrayBuffer();
     if(bytes.byteLength<10000)throw Error("La plantilla maestra parece estar incompleta.");
 
-    // PASO 2: conservar el XLSX maestro como ZIP y modificar únicamente
-    // los valores de las celdas de estado de los atletas existentes.
     const zip=await JSZip.loadAsync(bytes);
     const sheetPath="xl/worksheets/sheet1.xml", ssPath="xl/sharedStrings.xml";
     const sheetFile=zip.file(sheetPath), ssFile=zip.file(ssPath);
@@ -104,7 +101,14 @@ async function downloadExcel(){
     let sheet=await sheetFile.async("string");
     const ssXml=await ssFile.async("string");
 
-    // Localizar los índices ya existentes para C / EP / P / NA.
+    // La plantilla maestra usa textos como "En proceso" y "N/A" en sharedStrings.
+    // Se normalizan acentos, mayúsculas y espacios para que el exportador no dependa
+    // de una escritura exacta de las etiquetas.
+    const normalize=s=>String(s??"")
+      .replace(/\r?\n/g," ")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .replace(/\s+/g," ").trim().toLowerCase();
+
     const shared=[];
     const siRe=/<si\b[^>]*>([\s\S]*?)<\/si>/g; let sm;
     while((sm=siRe.exec(ssXml))){
@@ -113,9 +117,17 @@ async function downloadExcel(){
       while((tm=tRe.exec(inner)))texts.push(tm[1]);
       shared.push(texts.join(""));
     }
-    const sharedIndex={}; shared.forEach((v,i)=>{if(sharedIndex[v]===undefined)sharedIndex[v]=i});
-    const statusIndex={C:sharedIndex["Consolidado"],EP:sharedIndex["En proceso"],P:sharedIndex["Proyección"],NA:sharedIndex["N/A"]};
-    if(Object.values(statusIndex).some(v=>v===undefined))throw Error("No se localizaron en la plantilla las etiquetas de estado necesarias.");
+    const sharedIndex={};
+    shared.forEach((v,i)=>{const k=normalize(v);if(sharedIndex[k]===undefined)sharedIndex[k]=i});
+    const statusIndex={
+      C: sharedIndex[normalize("Consolidado")],
+      EP: sharedIndex[normalize("En proceso")],
+      P: sharedIndex[normalize("Proyección")],
+      NA: sharedIndex[normalize("N/A")]
+    };
+    if(Object.values(statusIndex).some(v=>v===undefined)){
+      throw Error("No se localizaron en la plantilla las etiquetas de estado C, EP, P y NA.");
+    }
 
     // Leer de la fila 1 el nombre y columna reales de cada atleta del Excel maestro.
     const row1Match=sheet.match(/<row\b[^>]*\br="1"[^>]*>([\s\S]*?)<\/row>/);
@@ -126,32 +138,45 @@ async function downloadExcel(){
       const attrs=cm[1],body=cm[2]||"";
       const rm=attrs.match(/\br="([A-Z]+1)"/), vm=body.match(/<v>(\d+)<\/v>/);
       if(!rm||!vm||!/\bt="s"/.test(attrs))continue;
-      const name=shared[Number(vm[1])]; if(name)masterCols[name]=rm[1].slice(0,-1);
+      const name=shared[Number(vm[1])];
+      if(name)masterCols[normalize(name)]=rm[1].slice(0,-1);
     }
 
-    const escReg=s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+    // Respaldo por posición para la plantilla maestra actual: C:AF son los 30 atletas.
+    // Solo se usa si el nombre no coincidió; nunca modifica las columnas estructurales.
+    const colName=n=>{
+      let x=n,s=""; while(x){const r=(x-1)%26;s=String.fromCharCode(65+r)+s;x=Math.floor((x-1)/26)} return s;
+    };
+    const athleteCol=(ath,idx)=>masterCols[normalize(ath.name)]||colName(idx+3);
+
     const replaceCellValue=(xml,ref,newValue)=>{
-      const re=new RegExp('(<c\\b[^>]*\\br="'+escReg(ref)+'"[^>]*)(>)([\s\S]*?)(</c>)');
+      const re=new RegExp('(<c\\b[^>]*\\br="'+ref.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+'"[^>]*)(>)([\\s\\S]*?)(<\\/c>)');
       const m=re.exec(xml); if(!m)return xml;
       let attrs=m[1];
-      if(/\bt="[^"]*"/.test(attrs))attrs=attrs.replace(/\bt="[^"]*"/, 't="s"'); else attrs+=' t="s"';
+      if(/\bt="[^"]*"/.test(attrs))attrs=attrs.replace(/\bt="[^"]*"/,'t="s"');
+      else attrs+=' t="s"';
       let body=m[3];
-      if(/<v>\d+<\/v>/.test(body))body=body.replace(/<v>\d+<\/v>/, '<v>'+newValue+'</v>'); else body='<v>'+newValue+'</v>'+body;
+      if(/<v>\d+<\/v>/.test(body))body=body.replace(/<v>\d+<\/v>/,'<v>'+newValue+'</v>');
+      else body='<v>'+newValue+'</v>'+body;
       return xml.slice(0,m.index)+attrs+m[2]+body+m[4]+xml.slice(m.index+m[0].length);
     };
 
-    let updated=0, missing=0;
-    db.athletes.forEach(ath=>{
-      const col=masterCols[ath.name];
-      if(!col)return; // Los atletas nuevos se incorporarán en el siguiente paso estructural.
+    let updated=0, missing=0, matchedAthletes=0;
+    db.athletes.forEach((ath,idx)=>{
+      const col=athleteCol(ath,idx);
+      // Este paso solo trabaja con las columnas existentes C:AF.
+      if(!col || idx>29)return;
+      matchedAthletes++;
       db.items.forEach(item=>{
         const status=(item.status&&item.status[ath.name])||"NA";
-        const idx=statusIndex[status]===undefined?statusIndex.NA:statusIndex[status];
-        const ref=col+item.row, before=sheet;
-        sheet=replaceCellValue(sheet,ref,idx);
+        const idxStatus=statusIndex[status]===undefined?statusIndex.NA:statusIndex[status];
+        const ref=col+Number(item.row), before=sheet;
+        sheet=replaceCellValue(sheet,ref,idxStatus);
         if(sheet!==before)updated++; else missing++;
       });
     });
+
+    if(!matchedAthletes)throw Error("No se pudieron relacionar los atletas del repositorio con las columnas C:AF del Excel maestro.");
     if(!updated)throw Error("No se encontraron celdas de estado de los atletas existentes para actualizar.");
 
     zip.file(sheetPath,sheet);
@@ -159,13 +184,14 @@ async function downloadExcel(){
     dl(out,"NORMATIVOS_AKC_ACTUALIZADO_"+new Date().toISOString().slice(0,10)+".xlsx");
     setSync("ok","Sincronizado");
     toast("Excel actualizado con los cambios del repositorio");
-    console.log("Excel AKC actualizado:",updated,"celdas; no encontradas:",missing);
+    console.log("Excel AKC actualizado:",updated,"celdas; no encontradas:",missing,"atletas:",matchedAthletes);
   }catch(e){
     console.error(e); setSync("ok","Sincronizado");
     alert("No se pudo generar el Excel actualizado: "+e.message);
-  }finally{if(btn)btn.disabled=false}
-}
-function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function toast(s){const t=document.getElementById("toast");t.textContent=s;t.style.display="block";clearTimeout(window.__t);window.__t=setTimeout(()=>t.style.display="none",1800)}
 init();
 

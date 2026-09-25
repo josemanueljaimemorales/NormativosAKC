@@ -1,20 +1,16 @@
-# Repositorio AKC — versión estable + Excel sincronizado
+# AKC Repositorio — Paso 2
 
-Esta versión conserva la interfaz, Firebase y la plantilla maestra Excel que ya estaban funcionando.
+Esta versión conserva el repositorio/Firebase y el Excel maestro validado.
 
-## Excel
+## Descargar Excel
 
-El botón **Descargar Excel** ahora:
-1. toma la plantilla `NORMATIVOS_AKC.xlsx` validada;
-2. lee el estado actual de Firebase;
-3. actualiza los estados C / EP / P / NA de los atletas que ya existen en la plantilla;
-4. conserva la estructura, estilos, fórmulas, combinaciones y demás componentes del libro, modificando únicamente las celdas de estado de `NORMATIVOS`.
+`Descargar Excel` toma la plantilla `NORMATIVOS_AKC.xlsx` y actualiza directamente en su XML las celdas de estado de los atletas existentes (C / EP / P / NA), conservando la estructura original del libro.
 
-Los atletas nuevos todavía no se insertan estructuralmente en el Excel en esta etapa. Esa será la siguiente fase, después de validar esta sincronización básica.
+Esta fase no incorpora todavía atletas nuevos al Excel ni modifica la estructura de las demás hojas. Esa será la siguiente fase después de validar esta exportación.
 
 ## Firebase
 
 Colección: `normativosAKC`
 Documento: `estado`
 
-La base central sigue siendo Firebase; el Excel es el archivo generado para respaldo, impresión y almacenamiento.
+El repositorio sigue usando Firebase como fuente central de datos.
