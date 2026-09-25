@@ -90,29 +90,105 @@ async function downloadExcel(){
     const resp=await fetch("NORMATIVOS_AKC.xlsx",{cache:"no-store"});
     if(!resp.ok)throw Error("No se encontró la plantilla NORMATIVOS_AKC.xlsx junto al repositorio.");
     const zip=await JSZip.loadAsync(await resp.arrayBuffer());
-    const sheetFile=zip.file("xl/worksheets/sheet1.xml");
-    if(!sheetFile)throw Error("La plantilla no contiene la hoja NORMATIVOS.");
-    let xml=await sheetFile.async("string");
-    const statusIndex={C:33,EP:303,P:34,NA:299};
     const colLetters=n=>{let s="";while(n){let r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26)}return s};
-    let changed=0;
-    for(const athlete of db.athletes){
-      const col=Number(athlete.column);
-      if(!col||col<3||col>32)continue;
-      const letter=colLetters(col);
-      for(const item of db.items){
-        const value=statusIndex[item.status?.[athlete.name]||"NA"]??299;
-        const cell=letter+Number(item.row);
-        const re=new RegExp('(<c\\s+r="'+cell+'"[^>]*\\bt="s"[^>]*>\\s*<v>)[^<]*(</v>\\s*</c>)');
-        if(re.test(xml)){xml=xml.replace(re,'$1'+value+'$2');changed++}
-      }
+    const colNum=s=>{let n=0;for(const ch of s)n=n*26+ch.charCodeAt(0)-64;return n};
+    const escXml=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    const getCell=(row,col,r)=>{const re=new RegExp('<c\\s+r="'+col+r+'"[^>]*>.*?</c>|<c\\s+r="'+col+r+'"[^>]*/>');const m=row.match(re);return m?m[0]:null};
+    const replaceCell=(row,col,r,newCell)=>{const re=new RegExp('<c\\s+r="'+col+r+'"[^>]*>.*?</c>|<c\\s+r="'+col+r+'"[^>]*/>');return re.test(row)?row.replace(re,newCell):row.replace('</row>',newCell+'</row>')};
+    const setValue=(cell,value,type)=>{
+      cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"");
+      if(type==="inlineStr") return cell.replace(/>/," t=\"inlineStr\">").replace('</c>','<is><t>'+escXml(value)+'</t></is></c>');
+      return cell.replace(/>/,' t="s">').replace('</c>','<v>'+value+'</v></c>');
+    };
+    const statusIndex={C:33,EP:303,P:34,NA:299};
+    let s1=await zip.file("xl/worksheets/sheet1.xml").async("string");
+    const ss=await zip.file("xl/sharedStrings.xml").async("string");
+    const ssVals=[]; for(const si of ss.matchAll(/<si>(.*?)<\/si>/gs)) ssVals.push([...si[1].matchAll(/<t[^>]*>(.*?)<\/t>/gs)].map(m=>m[1]).join(""));
+    const row1=(s1.match(/<row r="1".*?<\/row>/s)||[])[0];
+    const originalNames=[];
+    for(let c=3;c<=32;c++){const cell=getCell(row1,colLetters(c),1);const vm=cell&&cell.match(/<v>(\d+)<\/v>/);if(vm)originalNames.push(ssVals[Number(vm[1])]||"")}
+    const originalSet=new Set(originalNames);
+    const byName=new Map(db.athletes.map(a=>[a.name,a]));
+    const ordered=[...db.athletes.filter(a=>!originalSet.has(a.name)),...originalNames.filter(n=>byName.has(n)).map(n=>byName.get(n))];
+    const extra=Math.max(0,ordered.length-30);
+    if(extra){
+      s1=s1.replace(/r="([A-Z]+)(\d+)"/g,(m,c,r)=>colNum(c)>=3?'r="'+colLetters(colNum(c)+extra)+r+'"':m);
+      s1=s1.replace(/<col(\s+[^>]*)\s*\/>/g,(m,a)=>{const mn=(a.match(/min="(\d+)"/)||[])[1],mx=(a.match(/max="(\d+)"/)||[])[1];if(!mn||!mx||Number(mn)<3)return m;const b=a.replace(/min="\d+"/,`min="${Number(mn)+extra}"`).replace(/max="\d+"/,`max="${Number(mx)+extra}"`);return `<col${b}/>`;});
+      const cm=s1.match(/<cols>(.*?)<\/cols>/s); if(cm){const src=cm[1].match(/<col min="4" max="4"[^>]*\/>/);if(src){const nc=src[0].replace('min="4"','min="3"').replace('max="4"','max="3"');s1=s1.slice(0,cm.index+6)+nc+cm[1]+s1.slice(cm.index+6+cm[1].length)}}
+      const shiftRef=ref=>ref.replace(/([A-Z]+)(\d+)/g,(m,c,r)=>colNum(c)>=3?colLetters(colNum(c)+extra)+r:m);
+      s1=s1.replace(/(<mergeCell ref=")([^"]+)(")/g,(m,a,r,b)=>a+shiftRef(r)+b);
+      s1=s1.replace(/(<dimension ref=")([^"]+)(")/g,(m,a,r,b)=>a+shiftRef(r)+b);
+      s1=s1.replace(/(topLeftCell|activeCell|sqref)="([^"]+)"/g,(m,a,r)=>a+'="'+shiftRef(r)+'"');
+      s1=s1.replace(/spans="1:(\d+)"/g,(m,n)=>`spans="1:${Number(n)+extra}"`);
+      // Conditional formatting and validation cover the complete athlete block: keep C as the left edge and extend AF to the new last athlete column.
+      const last=colLetters(2+Math.max(30,ordered.length));
+      s1=s1.replace(/sqref="C3:AF279"/,'sqref="C3:'+last+'279"');
+      s1=s1.replace(/<xm:sqref>(.*?)<\/xm:sqref>/s,(m,r)=>'<xm:sqref>'+r.replace(/C(\d+):AF(\d+)/g,`C$1:${last}$2`)+'</xm:sqref>');
     }
-    if(changed===0)throw Error("No se encontraron celdas de normativos para actualizar.");
-    zip.file("xl/worksheets/sheet1.xml",xml);
+    const rows=new Map(); for(const m of s1.matchAll(/<row r="(\d+)".*?<\/row>/gs))rows.set(Number(m[1]),m[0]);
+    const sourceCol=colLetters(3+extra);
+    const itemByRow=new Map(db.items.map(it=>[Number(it.row),it]));
+    let r1x=rows.get(1);
+    for(let i=0;i<Math.max(30,ordered.length);i++){
+      const col=colLetters(3+i),src=getCell(r1x,sourceCol,1)||getCell(r1x,"C",1); if(!src)continue;
+      let cell=src.replace(/r="[A-Z]+1"/,`r="${col}1"`);
+      if(i<ordered.length)cell=setValue(cell,ordered[i].name,"inlineStr");else{cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"")}
+      r1x=replaceCell(r1x,col,1,cell);
+    }
+    rows.set(1,r1x);
+    for(let r=2;r<=279;r++){
+      let rr=rows.get(r); if(!rr)continue;
+      for(let i=0;i<Math.max(30,ordered.length);i++){
+        const col=colLetters(3+i),src=getCell(rr,sourceCol,r)||getCell(rr,"C",r);if(!src)continue;
+        let cell=src.replace(/r="[A-Z]+\d+"/,`r="${col}${r}"`);
+        const item=itemByRow.get(r);
+        if(i<ordered.length && item)cell=setValue(cell,statusIndex[item.status?.[ordered[i].name]||"NA"]??299,"s");
+        else cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"");
+        rr=replaceCell(rr,col,r,cell);
+      }
+      rows.set(r,rr);
+    }
+    s1=s1.replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+[...rows.keys()].sort((a,b)=>a-b).map(r=>rows.get(r)).join('')+'</sheetData>');
+    zip.file("xl/worksheets/sheet1.xml",s1);
+
+    // CONSOLIDADO: new athletes appear at the top; formulas are rebuilt explicitly to avoid shared-formula corruption.
+    let s4=await zip.file("xl/worksheets/sheet4.xml").async("string");
+    const oldRows=new Map();for(const m of s4.matchAll(/<row r="(\d+)".*?<\/row>/gs))oldRows.set(Number(m[1]),m[0]);
+    const template=oldRows.get(4);const keep=new Map([...oldRows].filter(([r])=>r<4||r>33));
+    for(let i=0;i<ordered.length;i++){
+      const r=4+i,col=colLetters(3+i);let rr=template.replace('<row r="4"',`<row r="${r}"`).replace(/r="([A-Z]+)4"/g,(m,c)=>`r="${c}${r}"`);
+      const ca=getCell(rr,"A",r);if(ca)rr=replaceCell(rr,"A",r,setValue(ca,ordered[i].name,"inlineStr"));
+      const formulas={B:`COUNTA(NORMATIVOS!${col}3:${col}279)`,C:`COUNTIF(NORMATIVOS!${col}3:${col}279,"Consolidado")`,D:`COUNTIF(NORMATIVOS!${col}3:${col}279,"En proceso")`,E:`COUNTIF(NORMATIVOS!${col}3:${col}279,"Proyección")`,F:`COUNTIF(NORMATIVOS!${col}3:${col}279,"N/A")`,G:`IFERROR(C${r}/(B${r}-F${r}),0)`,H:`IF(G${r}>=0.8,"Alto avance",IF(G${r}>=0.5,"Avance medio",IF(G${r}>=0.3,"Avance inicial",IF(G${r}>=0.1,"Base solida","Base inicial"))))`};
+      for(const [c,f] of Object.entries(formulas)){let cc=getCell(rr,c,r);if(!cc)continue;cc=cc.replace(/<f[^>]*>.*?<\/f>/gs,`<f>${escXml(f)}</f>`).replace(/<v>.*?<\/v>/gs,"").replace(/<f\s+[^>]*>/,'<f>');if(!cc.includes('<f>'))cc=cc.replace('</c>',`<f>${escXml(f)}</f></c>`);rr=replaceCell(rr,c,r,cc)}
+      keep.set(r,rr);
+    }
+    s4=s4.replace(/<dimension ref="[^"]+"/,`<dimension ref="A1:H${3+ordered.length}"`).replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+[...keep.keys()].sort((a,b)=>a-b).map(r=>keep.get(r)).join('')+'</sheetData>');
+    zip.file("xl/worksheets/sheet4.xml",s4);
+
+    // FICHA: expand athlete ranges and show the currently selected athlete in B3.
+    let s2=await zip.file("xl/worksheets/sheet2.xml").async("string");
+    for(const c of ['A','B','C','D','E','F'])s2=s2.replaceAll(`CONSOLIDADO!$${c}$4:$${c}$33`,`CONSOLIDADO!$${c}$4:$${c}$${3+ordered.length}`);
+    s2=s2.replaceAll('NORMATIVOS!$C$1:$AF$1','NORMATIVOS!$C$1:$'+colLetters(2+Math.max(30,ordered.length))+'$1');
+    s2=s2.replace(/NORMATIVOS!\$C\$(\d+):\$AF\$(\d+)/g,(m,a,b)=>`NORMATIVOS!$C$${a}:$${colLetters(2+Math.max(30,ordered.length))}$${b}`);
+    const sel=document.getElementById("athlete")?.value||ordered[0]?.name||"";let rr3=(s2.match(/<row r="3".*?<\/row>/s)||[])[0];if(rr3){const cb=getCell(rr3,"B",3);if(cb){rr3=replaceCell(rr3,"B",3,setValue(cb,sel,"inlineStr"));s2=s2.replace(/<row r="3".*?<\/row>/s,rr3)}}
+    zip.file("xl/worksheets/sheet2.xml",s2);
+
+    // INDICADORES: include the new athlete in the totals.
+    let s3=await zip.file("xl/worksheets/sheet3.xml").async("string");
+    for(const c of ['A','G','C','D','E','F'])s3=s3.replaceAll(`CONSOLIDADO!${c}4:${c}33`,`CONSOLIDADO!${c}4:${c}${3+ordered.length}`);
+    zip.file("xl/worksheets/sheet3.xml",s3);
+
+    // Force Excel to recalculate formulas after the structural change; remove stale calcChain only.
+    if(zip.file("xl/calcChain.xml"))zip.remove("xl/calcChain.xml");
+    let wb=await zip.file("xl/workbook.xml").async("string");
+    wb=wb.replace(/<calcPr[^>]*\/>/,'<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>');
+    if(!wb.includes('<calcPr'))wb=wb.replace('</workbook>','<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>');
+    zip.file("xl/workbook.xml",wb);
+    let rel=await zip.file("xl/_rels/workbook.xml.rels").async("string");rel=rel.replace(/<Relationship[^>]+Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/calcChain"[^>]*\/>/,'');zip.file("xl/_rels/workbook.xml.rels",rel);
+
     const out=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6},mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-    const stamp=new Date().toISOString().slice(0,10);
-    dl(out,"NORMATIVOS_AKC_RESPALDO_"+stamp+".xlsx");
-    setSync("ok","Sincronizado");toast("Excel generado correctamente");
+    const stamp=new Date().toISOString().slice(0,10);dl(out,"NORMATIVOS_AKC_RESPALDO_"+stamp+".xlsx");
+    setSync("ok","Sincronizado");toast("Excel generado con "+ordered.length+" atletas");
   }catch(e){console.error(e);setSync("ok","Sincronizado");alert("No se pudo generar el Excel: "+e.message)}
   finally{if(btn)btn.disabled=false}
 }
