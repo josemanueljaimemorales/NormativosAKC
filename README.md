@@ -1,41 +1,22 @@
-# ÁGUILAS KC — Repositorio de Normativos
+# AKC Repositorio de Normativos
 
-## Archivos en GitHub Pages
+Repositorio web de trabajo para Gimnasia Artística Varonil de Águilas de Kids Center.
 
-Sube estos cuatro archivos al mismo nivel:
+## Funciones
+- Selección de atleta y aparato.
+- Consulta por clasificación y búsqueda de elementos.
+- Cambio individual y masivo de etapas C / EP / P / NA.
+- Agregar atleta con ficha básica y 266 normativos inicializados en NA.
+- Editar datos básicos del atleta.
+- Eliminar atleta definitivamente con doble confirmación y escritura exacta del nombre.
+- Respaldo/restauración JSON como herramienta de seguridad.
+- Descarga del Excel maestro preservando el paquete XLSX original y modificando los valores de etapa cuando corresponde.
 
-- `index.html`
-- `database.json`
-- `NORMATIVOS_AKC.xlsx`
-- `logo.png`
+## Publicación
+Sube al mismo repositorio de GitHub Pages:
+- index.html
+- database.json
+- NORMATIVOS_AKC.xlsx
+- logo.png (opcional)
 
-El `logo.png` es tu logo real y lo puedes agregar manualmente.
-
-## Exportación del Excel
-
-Esta versión **ya no reconstruye el Excel con una librería de hojas de cálculo**.
-
-Al pulsar **Descargar Excel maestro actualizado**, la plataforma:
-
-1. Abre el `NORMATIVOS_AKC.xlsx` original como paquete XLSX.
-2. Localiza la hoja `NORMATIVOS`.
-3. Modifica únicamente los valores de las celdas de etapas.
-4. Vuelve a empaquetar el mismo libro, dejando intactas las demás partes del XLSX.
-
-Por tanto, se conservan los componentes que estaban en el archivo maestro, incluyendo hojas, fórmulas, estilos, combinaciones, validaciones, formato condicional, gráficas y configuración del libro, en lugar de reconstruirlos.
-
-## Flujo
-
-Repositorio → modificar normativos → Descargar Excel maestro actualizado → revisar → reemplazar manualmente en OneDrive.
-
-## Diseño
-
-- Logo centrado.
-- ÁGUILAS DE KIDS CENTER.
-- Gimnasia Artística Varonil.
-- Diseño institucional azul marino, dorado y blanco.
-- Adaptado para celular y computadora.
-
-
-### Descarga de Excel
-La descarga genera explícitamente `NORMATIVOS_AKC_ACTUALIZADO.xlsx` con el MIME oficial de Excel. No debe descargarse ni mostrarse como una carpeta ZIP.
+El navegador debe tener conexión a Internet para cargar JSZip desde CDN al generar el Excel.
