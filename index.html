@@ -85,7 +85,7 @@ function dl(blob,name){const u=URL.createObjectURL(blob),a=document.createElemen
 async function downloadExcel(){
   if(!db||!cloudReady){alert("Primero espera a que el repositorio aparezca como Sincronizado.");return}
   const btn=[...document.querySelectorAll("button")].find(b=>b.textContent.includes("Descargar Excel"));
-  if(btn)btn.disabled=true; setSync("busy","Generando Excel…");
+  if(btn)btn.disabled=true;setSync("busy","Generando Excel…");
   try{
     const resp=await fetch("NORMATIVOS_AKC.xlsx",{cache:"no-store"});
     if(!resp.ok)throw Error("No se encontró la plantilla NORMATIVOS_AKC.xlsx junto al repositorio.");
@@ -93,104 +93,81 @@ async function downloadExcel(){
     const colLetters=n=>{let s="";while(n){let r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26)}return s};
     const colNum=s=>{let n=0;for(const ch of s)n=n*26+ch.charCodeAt(0)-64;return n};
     const escXml=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-    const getCell=(row,col,r)=>{const re=new RegExp('<c\\s+r="'+col+r+'"[^>]*>.*?</c>|<c\\s+r="'+col+r+'"[^>]*/>');const m=row.match(re);return m?m[0]:null};
-    const replaceCell=(row,col,r,newCell)=>{const re=new RegExp('<c\\s+r="'+col+r+'"[^>]*>.*?</c>|<c\\s+r="'+col+r+'"[^>]*/>');return re.test(row)?row.replace(re,newCell):row.replace('</row>',newCell+'</row>')};
-    const setValue=(cell,value,type)=>{
-      cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"");
-      if(type==="inlineStr") return cell.replace(/>/," t=\"inlineStr\">").replace('</c>','<is><t>'+escXml(value)+'</t></is></c>');
-      return cell.replace(/>/,' t="s">').replace('</c>','<v>'+value+'</v></c>');
-    };
+    const getCell=(row,col,r)=>{const re=new RegExp('<c\\s+r="'+col+r+'"[^>]*>.*?</c>|<c\\s+r="'+col+r+'"[^>]*/>','s');const m=row.match(re);return m?m[0]:null};
+    const replaceCell=(row,col,r,newCell)=>{const re=new RegExp('<c\\s+r="'+col+r+'"[^>]*>.*?</c>|<c\\s+r="'+col+r+'"[^>]*/>','s');return re.test(row)?row.replace(re,newCell):row.replace('</row>',newCell+'</row>')};
+    const setInline=(cell,value)=>cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"").replace(/<c\s+/,'<c t="inlineStr" ').replace('</c>','<is><t>'+escXml(value)+'</t></is></c>');
+    const setShared=(cell,index)=>cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"").replace(/<c\s+/,'<c t="s" ').replace('</c>','<v>'+index+'</v></c>');
+    const shiftRef=ref=>ref.replace(/([A-Z]+)(\d+)/g,(m,c,r)=>colNum(c)>=3?colLetters(colNum(c)+1)+r:m);
     const statusIndex={C:33,EP:303,P:34,NA:299};
+
     let s1=await zip.file("xl/worksheets/sheet1.xml").async("string");
     const ss=await zip.file("xl/sharedStrings.xml").async("string");
-    const ssVals=[]; for(const si of ss.matchAll(/<si>(.*?)<\/si>/gs)) ssVals.push([...si[1].matchAll(/<t[^>]*>(.*?)<\/t>/gs)].map(m=>m[1]).join(""));
-    const row1=(s1.match(/<row r="1".*?<\/row>/s)||[])[0];
-    const originalNames=[];
-    for(let c=3;c<=32;c++){const cell=getCell(row1,colLetters(c),1);const vm=cell&&cell.match(/<v>(\d+)<\/v>/);if(vm)originalNames.push(ssVals[Number(vm[1])]||"")}
-    const originalSet=new Set(originalNames);
-    const byName=new Map(db.athletes.map(a=>[a.name,a]));
-    const ordered=[...db.athletes.filter(a=>!originalSet.has(a.name)),...originalNames.filter(n=>byName.has(n)).map(n=>byName.get(n))];
-    const extra=Math.max(0,ordered.length-30);
-    if(extra){
-      s1=s1.replace(/r="([A-Z]+)(\d+)"/g,(m,c,r)=>colNum(c)>=3?'r="'+colLetters(colNum(c)+extra)+r+'"':m);
-      s1=s1.replace(/<col(\s+[^>]*)\s*\/>/g,(m,a)=>{const mn=(a.match(/min="(\d+)"/)||[])[1],mx=(a.match(/max="(\d+)"/)||[])[1];if(!mn||!mx||Number(mn)<3)return m;const b=a.replace(/min="\d+"/,`min="${Number(mn)+extra}"`).replace(/max="\d+"/,`max="${Number(mx)+extra}"`);return `<col${b}/>`;});
-      const cm=s1.match(/<cols>(.*?)<\/cols>/s); if(cm){const src=cm[1].match(/<col min="4" max="4"[^>]*\/>/);if(src){const nc=src[0].replace('min="4"','min="3"').replace('max="4"','max="3"');s1=s1.slice(0,cm.index+6)+nc+cm[1]+s1.slice(cm.index+6+cm[1].length)}}
-      const shiftRef=ref=>ref.replace(/([A-Z]+)(\d+)/g,(m,c,r)=>colNum(c)>=3?colLetters(colNum(c)+extra)+r:m);
-      s1=s1.replace(/(<mergeCell ref=")([^"]+)(")/g,(m,a,r,b)=>a+shiftRef(r)+b);
-      s1=s1.replace(/(<dimension ref=")([^"]+)(")/g,(m,a,r,b)=>a+shiftRef(r)+b);
-      s1=s1.replace(/(topLeftCell|activeCell|sqref)="([^"]+)"/g,(m,a,r)=>a+'="'+shiftRef(r)+'"');
-      s1=s1.replace(/spans="1:(\d+)"/g,(m,n)=>`spans="1:${Number(n)+extra}"`);
-      // Conditional formatting and validation cover the complete athlete block: keep C as the left edge and extend AF to the new last athlete column.
-      const last=colLetters(2+Math.max(30,ordered.length));
-      s1=s1.replace(/sqref="C3:AF279"/,'sqref="C3:'+last+'279"');
-      s1=s1.replace(/<xm:sqref>(.*?)<\/xm:sqref>/s,(m,r)=>'<xm:sqref>'+r.replace(/C(\d+):AF(\d+)/g,`C$1:${last}$2`)+'</xm:sqref>');
-    }
-    const rows=new Map(); for(const m of s1.matchAll(/<row r="(\d+)".*?<\/row>/gs))rows.set(Number(m[1]),m[0]);
-    const sourceCol=colLetters(3+extra);
+    const ssVals=[];for(const si of ss.matchAll(/<si>(.*?)<\/si>/gs))ssVals.push([...si[1].matchAll(/<t[^>]*>(.*?)<\/t>/gs)].map(m=>m[1]).join(""));
+    const rows1=new Map();for(const m of s1.matchAll(/<row r="(\d+)".*?<\/row>/gs))rows1.set(Number(m[1]),m[0]);
+    const originalRows=new Map(rows1);
+    const originalC=new Map(),originalStyle=new Map();
+    for(const [r,row] of originalRows){const c=getCell(row,"C",r);if(c)originalC.set(r,c);for(const m of row.matchAll(/<c\s+r="([A-Z]+)(\d+)"([^>]*)>/g)){const sid=(m[3].match(/\bs="(\d+)"/)||[])[1];if(sid)originalStyle.set(r+"|"+m[1],sid)}}
+    const row1=originalRows.get(1);const originalNames=[];
+    for(let c=3;c<=32;c++){const cell=getCell(row1,colLetters(c),1);if(cell){const vm=cell.match(/<v>(\d+)<\/v>/);originalNames.push(vm?(ssVals[Number(vm[1])]||""):"")}}
+    const originalSet=new Set(originalNames.filter(Boolean));
+    const newAthletes=db.athletes.filter(a=>!originalSet.has(a.name));
+    const existingAthletes=originalNames.map(n=>db.athletes.find(a=>a.name===n)).filter(Boolean);
+    const ordered=[...newAthletes,...existingAthletes];
     const itemByRow=new Map(db.items.map(it=>[Number(it.row),it]));
-    let r1x=rows.get(1);
-    for(let i=0;i<Math.max(30,ordered.length);i++){
-      const col=colLetters(3+i),src=getCell(r1x,sourceCol,1)||getCell(r1x,"C",1); if(!src)continue;
-      let cell=src.replace(/r="[A-Z]+1"/,`r="${col}1"`);
-      if(i<ordered.length)cell=setValue(cell,ordered[i].name,"inlineStr");else{cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"")}
-      r1x=replaceCell(r1x,col,1,cell);
+    const maxAth=Math.max(30,ordered.length);
+    const oldLast=32;
+    const newLast=2+maxAth;
+
+    // True insertion at column C: move existing cells C:AO one column right, but preserve the visual style of each destination column.
+    for(const [r0,row0] of originalRows){
+      let row=row0;
+      row=row.replace(/<c\s+r="([A-Z]+)(\d+)"[^>]*>.*?<\/c>|<c\s+r="([A-Z]+)(\d+)"[^>]\/>/gs,(full,c1,r1,c2,r2)=>{
+        const oldc=c1||c2,rr=Number(r1||r2),n=colNum(oldc);if(n<3)return full;
+        const newc=colLetters(n+1),sid=originalStyle.get(rr+"|"+newc);let cell=full.replace(new RegExp('r="'+oldc+rr+'"'), 'r="'+newc+rr+'"');if(sid)cell=cell.replace(/\bs="\d+"/, 's="'+sid+'"');return cell;
+      });
+      row=row.replace(/spans="1:(\d+)"/g,(m,n)=>'spans="1:'+Number(n+1)+'"');
+      rows1.set(r,row);
     }
-    rows.set(1,r1x);
-    for(let r=2;r<=279;r++){
-      let rr=rows.get(r); if(!rr)continue;
-      for(let i=0;i<Math.max(30,ordered.length);i++){
-        const col=colLetters(3+i),src=getCell(rr,sourceCol,r)||getCell(rr,"C",r);if(!src)continue;
-        let cell=src.replace(/r="[A-Z]+\d+"/,`r="${col}${r}"`);
-        const item=itemByRow.get(r);
-        if(i<ordered.length && item)cell=setValue(cell,statusIndex[item.status?.[ordered[i].name]||"NA"]??299,"s");
-        else cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"");
-        rr=replaceCell(rr,col,r,cell);
+    // Rebuild the complete athlete block so the new athlete(s) are at C and every existing athlete keeps the destination column's original style.
+    for(const [r,row0] of originalRows){
+      if(r!==1&&!itemByRow.has(r))continue;
+      let row=rows1.get(r)||row0;
+      for(let i=0;i<maxAth;i++){
+        const outCol=colLetters(3+i);
+        let cell=originalC.get(r);if(!cell)continue;
+        // Style comes from the original destination column when it existed; for new columns beyond AF use AF's style.
+        const sourceStyleCol=(3+i)<=32?colLetters(3+i):"AF";
+        const sid=originalStyle.get(r+"|"+sourceStyleCol);if(sid)cell=cell.replace(/\bs="\d+"/,'s="'+sid+'"');
+        cell=cell.replace(new RegExp('r="C'+r+'"'),'r="'+outCol+r+'"');
+        if(r===1){if(i<ordered.length)cell=setInline(cell,ordered[i].name);else cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"");}
+        else if(i<ordered.length){const st=itemByRow.get(r)?.status?.[ordered[i].name]||"NA";cell=setShared(cell,statusIndex[st]??statusIndex.NA)}
+        else{cell=cell.replace(/\s+t="[^"]+"/g,"").replace(/<v>.*?<\/v>/gs,"").replace(/<is>.*?<\/is>/gs,"")}
+        row=replaceCell(row,outCol,r,cell);
       }
-      rows.set(r,rr);
+      rows1.set(r,row);
     }
-    s1=s1.replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+[...rows.keys()].sort((a,b)=>a-b).map(r=>rows.get(r)).join('')+'</sheetData>');
+    s1=s1.replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+[...rows1.keys()].sort((a,b)=>a-b).map(r=>rows1.get(r)).join('')+'</sheetData>');
+    s1=s1.replace(/(<mergeCell ref=")([^"]+)(")/g,(m,a,r,b)=>a+shiftRef(r)+b).replace(/(<dimension ref=")([^"]+)(")/g,(m,a,r,b)=>a+shiftRef(r)+b).replace('sqref="C3:AF279"','sqref="C3:'+colLetters(newLast)+'279"');
+    const cm=s1.match(/<cols>(.*?)<\/cols>/s);if(cm){const cols=[...cm[1].matchAll(/<col\s+[^>]*\/>/g)].map(m=>m[0]);const out=[];let template=null;for(const c of cols){const mn=Number((c.match(/min="(\d+)"/)||[])[1]),mx=Number((c.match(/max="(\d+)"/)||[])[1]);if(mn===3&&mx===3)template=c;if(mx>=3){let x=c;if(mn>=3)x=x.replace(/min="\d+"/,'min="'+(mn+1)+'"');x=x.replace(/max="\d+"/,'max="'+(mx+1)+'"');out.push(x)}else out.push(c)}if(template)out.splice(2,0,template.replace(/min="3" max="3"/,'min="3" max="3"'));s1=s1.slice(0,cm.index+6)+out.join('')+s1.slice(cm.index+6+cm[1].length)}
     zip.file("xl/worksheets/sheet1.xml",s1);
 
-    // CONSOLIDADO: new athletes appear at the top; formulas are rebuilt explicitly to avoid shared-formula corruption.
+    // CONSOLIDADO: new athletes are rows 4,5,...; existing athletes follow. All formulas point to the shifted NORMATIVOS columns.
     let s4=await zip.file("xl/worksheets/sheet4.xml").async("string");
-    const oldRows=new Map();for(const m of s4.matchAll(/<row r="(\d+)".*?<\/row>/gs))oldRows.set(Number(m[1]),m[0]);
-    const template=oldRows.get(4);const keep=new Map([...oldRows].filter(([r])=>r<4||r>33));
-    for(let i=0;i<ordered.length;i++){
-      const r=4+i,col=colLetters(3+i);let rr=template.replace('<row r="4"',`<row r="${r}"`).replace(/r="([A-Z]+)4"/g,(m,c)=>`r="${c}${r}"`);
-      const ca=getCell(rr,"A",r);if(ca)rr=replaceCell(rr,"A",r,setValue(ca,ordered[i].name,"inlineStr"));
-      const formulas={B:`COUNTA(NORMATIVOS!${col}3:${col}279)`,C:`COUNTIF(NORMATIVOS!${col}3:${col}279,"Consolidado")`,D:`COUNTIF(NORMATIVOS!${col}3:${col}279,"En proceso")`,E:`COUNTIF(NORMATIVOS!${col}3:${col}279,"Proyección")`,F:`COUNTIF(NORMATIVOS!${col}3:${col}279,"N/A")`,G:`IFERROR(C${r}/(B${r}-F${r}),0)`,H:`IF(G${r}>=0.8,"Alto avance",IF(G${r}>=0.5,"Avance medio",IF(G${r}>=0.3,"Avance inicial",IF(G${r}>=0.1,"Base solida","Base inicial"))))`};
-      for(const [c,f] of Object.entries(formulas)){let cc=getCell(rr,c,r);if(!cc)continue;cc=cc.replace(/<f[^>]*>.*?<\/f>/gs,`<f>${escXml(f)}</f>`).replace(/<v>.*?<\/v>/gs,"").replace(/<f\s+[^>]*>/,'<f>');if(!cc.includes('<f>'))cc=cc.replace('</c>',`<f>${escXml(f)}</f></c>`);rr=replaceCell(rr,c,r,cc)}
-      keep.set(r,rr);
-    }
-    s4=s4.replace(/<dimension ref="[^"]+"/,`<dimension ref="A1:H${3+ordered.length}"`).replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+[...keep.keys()].sort((a,b)=>a-b).map(r=>keep.get(r)).join('')+'</sheetData>');
-    zip.file("xl/worksheets/sheet4.xml",s4);
+    const oldRows4=new Map();for(const m of s4.matchAll(/<row r="(\d+)".*?<\/row>/gs))oldRows4.set(Number(m[1]),m[0]);const template4=oldRows4.get(4);let keep4=[...oldRows4].filter(([r])=>r<4).map(x=>x[1]);
+    for(let i=0;i<ordered.length;i++){const r=4+i,col=colLetters(3+i);let row=template4.replace('<row r="4"','<row r="'+r+'"').replace(/r="([A-Z]+)4"/g,(m,c)=>'r="'+c+r+'"');row=replaceCell(row,'A',r,setInline(getCell(row,'A',r),ordered[i].name));const fs={B:'COUNTA(NORMATIVOS!'+col+'3:'+col+'279)',C:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"Consolidado")',D:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"En proceso")',E:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"Proyección")',F:'COUNTIF(NORMATIVOS!'+col+'3:'+col+'279,"N/A")',G:'IFERROR(C'+r+'/(B'+r+'-F'+r+'),0)',H:'IF(G'+r+'>=0.8,"Alto avance",IF(G'+r+'>=0.5,"Avance medio",IF(G'+r+'>=0.3,"Avance inicial",IF(G'+r+'>=0.1,"Base solida","Base inicial"))))'};for(const [cc,f] of Object.entries(fs)){let cell=getCell(row,cc,r);cell=cell.replace(/<f[^>]*>.*?<\/f>/s,'<f>'+escXml(f)+'</f>').replace(/<v>.*?<\/v>/s,'<v></v>');row=replaceCell(row,cc,r,cell)}keep4.push(row)}
+    s4=s4.replace(/<sheetData>.*?<\/sheetData>/s,'<sheetData>'+keep4.join('')+'</sheetData>').replace(/<dimension ref="[^"]+"/,'<dimension ref="A1:H'+(3+ordered.length)+'"');zip.file("xl/worksheets/sheet4.xml",s4);
 
-    // FICHA: expand athlete ranges and show the currently selected athlete in B3.
+    // FICHA DEL ATLETA: extend every athlete/status range and select the athlete used in the repository.
     let s2=await zip.file("xl/worksheets/sheet2.xml").async("string");
-    for(const c of ['A','B','C','D','E','F'])s2=s2.replaceAll(`CONSOLIDADO!$${c}$4:$${c}$33`,`CONSOLIDADO!$${c}$4:$${c}$${3+ordered.length}`);
-    s2=s2.replaceAll('NORMATIVOS!$C$1:$AF$1','NORMATIVOS!$C$1:$'+colLetters(2+Math.max(30,ordered.length))+'$1');
-    s2=s2.replace(/NORMATIVOS!\$C\$(\d+):\$AF\$(\d+)/g,(m,a,b)=>`NORMATIVOS!$C$${a}:$${colLetters(2+Math.max(30,ordered.length))}$${b}`);
-    const sel=document.getElementById("athlete")?.value||ordered[0]?.name||"";let rr3=(s2.match(/<row r="3".*?<\/row>/s)||[])[0];if(rr3){const cb=getCell(rr3,"B",3);if(cb){rr3=replaceCell(rr3,"B",3,setValue(cb,sel,"inlineStr"));s2=s2.replace(/<row r="3".*?<\/row>/s,rr3)}}
-    zip.file("xl/worksheets/sheet2.xml",s2);
+    s2=s2.replace(/\$C\$(\d+):\$AF\$(\d+)/g,'$C$$1:$AG$$2').replaceAll('$C$1:$AF$1','$C$1:$AG$1').replaceAll('$A$4:$A$33','$A$4:$A$'+(3+ordered.length)).replaceAll('$B$4:$B$33','$B$4:$B$'+(3+ordered.length));
+    const selected=document.getElementById("athlete")?.value||ordered[0]?.name||"";let rr3=(s2.match(/<row r="3".*?<\/row>/s)||[])[0];if(rr3){const b=getCell(rr3,'B',3);if(b)rr3=replaceCell(rr3,'B',3,setInline(b,selected));s2=s2.replace(/<row r="3".*?<\/row>/s,rr3)}zip.file("xl/worksheets/sheet2.xml",s2);
 
-    // INDICADORES: include the new athlete in the totals.
-    let s3=await zip.file("xl/worksheets/sheet3.xml").async("string");
-    for(const c of ['A','G','C','D','E','F'])s3=s3.replaceAll(`CONSOLIDADO!${c}4:${c}33`,`CONSOLIDADO!${c}4:${c}${3+ordered.length}`);
-    zip.file("xl/worksheets/sheet3.xml",s3);
+    // INDICADORES
+    let s3=await zip.file("xl/worksheets/sheet3.xml").async("string");for(const c of ['A','C','D','E','F','G'])s3=s3.replaceAll('CONSOLIDADO!'+c+'4:'+c+'33','CONSOLIDADO!'+c+'4:'+c+(3+ordered.length));zip.file("xl/worksheets/sheet3.xml",s3);
 
-    // Force Excel to recalculate formulas after the structural change; remove stale calcChain only.
-    if(zip.file("xl/calcChain.xml"))zip.remove("xl/calcChain.xml");
-    let wb=await zip.file("xl/workbook.xml").async("string");
-    wb=wb.replace(/<calcPr[^>]*\/>/,'<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>');
-    if(!wb.includes('<calcPr'))wb=wb.replace('</workbook>','<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>');
-    zip.file("xl/workbook.xml",wb);
-    let rel=await zip.file("xl/_rels/workbook.xml.rels").async("string");rel=rel.replace(/<Relationship[^>]+Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/calcChain"[^>]*\/>/,'');zip.file("xl/_rels/workbook.xml.rels",rel);
-
-    const out=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6},mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-    const stamp=new Date().toISOString().slice(0,10);dl(out,"NORMATIVOS_AKC_RESPALDO_"+stamp+".xlsx");
-    setSync("ok","Sincronizado");toast("Excel generado con "+ordered.length+" atletas");
-  }catch(e){console.error(e);setSync("ok","Sincronizado");alert("No se pudo generar el Excel: "+e.message)}
-  finally{if(btn)btn.disabled=false}
+    let wb=await zip.file("xl/workbook.xml").async("string");wb=wb.replace(/<calcPr[^>]*\/>/,'<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>');if(!wb.includes('<calcPr'))wb=wb.replace('</workbook>','<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>');zip.file("xl/workbook.xml",wb);if(zip.file("xl/calcChain.xml"))zip.remove("xl/calcChain.xml");
+    const out=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6},mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});dl(out,"NORMATIVOS_AKC_RESPALDO_"+new Date().toISOString().slice(0,10)+".xlsx");setSync("ok","Sincronizado");toast("Excel generado con "+ordered.length+" atletas");
+  }catch(e){console.error(e);setSync("ok","Sincronizado");alert("No se pudo generar el Excel: "+e.message)}finally{if(btn)btn.disabled=false}
 }
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function toast(s){const t=document.getElementById("toast");t.textContent=s;t.style.display="block";clearTimeout(window.__t);window.__t=setTimeout(()=>t.style.display="none",1800)}
