@@ -1,22 +1,20 @@
-# AKC Repositorio de Normativos — Firebase
+# Repositorio AKC — versión estable + Excel sincronizado
 
-Esta versión usa Firebase Firestore como base central para que los cambios se compartan entre celulares, tablets y computadoras.
+Esta versión conserva la interfaz, Firebase y la plantilla maestra Excel que ya estaban funcionando.
+
+## Excel
+
+El botón **Descargar Excel** ahora:
+1. toma la plantilla `NORMATIVOS_AKC.xlsx` validada;
+2. lee el estado actual de Firebase;
+3. actualiza los estados C / EP / P / NA de los atletas que ya existen en la plantilla;
+4. conserva la estructura, estilos, fórmulas, combinaciones y demás componentes del libro, modificando únicamente las celdas de estado de `NORMATIVOS`.
+
+Los atletas nuevos todavía no se insertan estructuralmente en el Excel en esta etapa. Esa será la siguiente fase, después de validar esta sincronización básica.
 
 ## Firebase
-- Proyecto: `akc-con-reporte`
-- Colección: `normativosAKC`
-- Documento principal: `estado`
 
-La primera vez, si el documento no existe, la aplicación carga `database.json` y lo publica en Firestore.
+Colección: `normativosAKC`
+Documento: `estado`
 
-## Importante
-El generador de Excel está temporalmente desactivado en esta versión para evitar volver a producir archivos dañados. El Excel original se conserva como plantilla. Primero se valida la sincronización central; después se integra un generador seguro.
-
-## Publicación
-Subir a GitHub Pages los archivos del ZIP. `database.json` y `NORMATIVOS_AKC.xlsx` deben permanecer junto a `index.html`.
-
-## Firestore
-Las reglas del proyecto Firebase deben permitir lectura y escritura de la colección `normativosAKC` para los usuarios que vayan a operar el repositorio. Si las reglas actuales no lo permiten, hay que ajustarlas en Firebase Console.
-
-## Excel V3
-Se corrigió la referencia de fila que provocaba el error "r is not defined" en la generación de Excel.
+La base central sigue siendo Firebase; el Excel es el archivo generado para respaldo, impresión y almacenamiento.
