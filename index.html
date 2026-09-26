@@ -123,18 +123,18 @@ async function downloadExcel(){
 
     const zip=await JSZip.loadAsync(bytes);
     const sheetPath="xl/worksheets/sheet1.xml", ssPath="xl/sharedStrings.xml";
-    const sheetFile=zip.file(sheetPath), ssFile=zip.file(ssPath);
-    if(!sheetFile||!ssFile)throw Error("La plantilla no contiene la hoja de normativos o sus cadenas compartidas.");
+    const indicatorPath="xl/worksheets/sheet4.xml";
+    const sheetFile=zip.file(sheetPath), ssFile=zip.file(ssPath), indicatorFile=zip.file(indicatorPath);
+    if(!sheetFile||!ssFile||!indicatorFile)throw Error("La plantilla no contiene las hojas necesarias para generar el Excel.");
     let sheet=await sheetFile.async("string");
+    let indicators=await indicatorFile.async("string");
     const ssXml=await ssFile.async("string");
 
-    // La plantilla maestra usa textos como "En proceso" y "N/A" en sharedStrings.
-    // Se normalizan acentos, mayúsculas y espacios para que el exportador no dependa
-    // de una escritura exacta de las etiquetas.
-    const normalize=s=>String(s??"")
-      .replace(/\r?\n/g," ")
-      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
-      .replace(/\s+/g," ").trim().toLowerCase();
+    const normalize=s=>String(s??"").replace(/\r?\n/g," ").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim().toLowerCase();
+    const xmlEsc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
+    const colNum=col=>{let n=0;for(const ch of col)n=n*26+ch.charCodeAt(0)-64;return n};
+    const colName=n=>{let s="";while(n){const r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26)}return s};
+    const shiftRef=(ref,delta)=>{const m=String(ref).match(/^([A-Z]+)(\d+)$/);return m?colName(colNum(m[1])+delta)+m[2]:ref};
 
     const shared=[];
     const siRe=/<si\b[^>]*>([\s\S]*?)<\/si>/g; let sm;
@@ -147,66 +147,200 @@ async function downloadExcel(){
     const sharedIndex={};
     shared.forEach((v,i)=>{const k=normalize(v);if(sharedIndex[k]===undefined)sharedIndex[k]=i});
     const statusIndex={
-      C: sharedIndex[normalize("Consolidado")],
-      EP: sharedIndex[normalize("En proceso")],
-      P: sharedIndex[normalize("Proyección")],
-      NA: sharedIndex[normalize("N/A")]
+      C:sharedIndex[normalize("Consolidado")],
+      EP:sharedIndex[normalize("En proceso")],
+      P:sharedIndex[normalize("Proyección")],
+      NA:sharedIndex[normalize("N/A")]
     };
-    if(Object.values(statusIndex).some(v=>v===undefined)){
-      throw Error("No se localizaron en la plantilla las etiquetas de estado C, EP, P y NA.");
+    if(Object.values(statusIndex).some(v=>v===undefined))throw Error("No se localizaron en la plantilla las etiquetas de estado C, EP, P y NA.");
+
+    // La plantilla tiene 30 atletas originales en C:AF y la estructura de niveles
+    // en AG:AP. El Excel generado reconstruye ese bloque según la lista actual de Firebase.
+    // Los atletas nuevos van al frente (C), los existentes conservan el orden original
+    // y los eliminados desaparecen. El resto de la estructura se mueve sin reconstruirla.
+    const originalNames=[];
+    const originalColByName={};
+    const row1=sheet.match(/<row\b[^>]*\br="1"[^>]*>([\s\S]*?)<\/row>/);
+    if(!row1)throw Error("No se encontró la fila de atletas en la hoja NORMATIVOS.");
+    const cellRe=/<c\b([^>]*?)(?:>([\s\S]*?)<\/c>|\s*\/>) /g;
+    const row1Cells=[]; let cr;
+    const row1Re=/<c\b([^>]*?)(?:>([\s\S]*?)<\/c>|\s*\/>)/g;
+    while((cr=row1Re.exec(row1[1]))){
+      const attrs=cr[1],body=cr[2]||"",rm=attrs.match(/\br="([A-Z]+)1"/),vm=body.match(/<v>(\d+)<\/v>/);
+      if(!rm||!vm||!attrs.includes('t="s"'))continue;
+      const c=rm[1]; if(colNum(c)<3||colNum(c)>32)continue;
+      const name=shared[Number(vm[1])]; if(!name)continue;
+      originalNames.push(name); originalColByName[normalize(name)]=c;
     }
+    if(!originalNames.length)throw Error("No se pudieron identificar los atletas originales del Excel maestro.");
 
-    // Leer de la fila 1 el nombre y columna reales de cada atleta del Excel maestro.
-    const row1Match=sheet.match(/<row\b[^>]*\br="1"[^>]*>([\s\S]*?)<\/row>/);
-    if(!row1Match)throw Error("No se encontró la fila de atletas en la hoja NORMATIVOS.");
-    const masterCols={};
-    const cellRe=/<c\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/c>)/g; let cm;
-    while((cm=cellRe.exec(row1Match[1]))){
-      const attrs=cm[1],body=cm[2]||"";
-      const rm=attrs.match(/\br="([A-Z]+1)"/), vm=body.match(/<v>(\d+)<\/v>/);
-      if(!rm||!vm||!/\bt="s"/.test(attrs))continue;
-      const name=shared[Number(vm[1])];
-      if(name)masterCols[normalize(name)]=rm[1].slice(0,-1);
-    }
+    const dbAthletes=Array.isArray(db.athletes)?db.athletes.filter(a=>a&&String(a.name||"").trim()):[];
+    if(!dbAthletes.length)throw Error("El repositorio no contiene atletas.");
+    const originalSet=new Set(originalNames.map(normalize));
+    const newAthletes=dbAthletes.filter(a=>!originalSet.has(normalize(a.name)));
+    const existingAthletes=dbAthletes.filter(a=>originalSet.has(normalize(a.name)));
+    // Nuevos al frente; los existentes siguen el orden del Excel maestro.
+    const existingSet=new Set(existingAthletes.map(a=>normalize(a.name)));
+    const orderedExisting=originalNames.filter(n=>existingSet.has(normalize(n))).map(n=>existingAthletes.find(a=>normalize(a.name)===normalize(n)));
+    const orderedAthletes=[...newAthletes,...orderedExisting];
+    const athleteCount=orderedAthletes.length;
+    if(athleteCount>1000)throw Error("El número de atletas excede el límite previsto para esta plantilla.");
 
-    // Respaldo por posición para la plantilla maestra actual: C:AF son los 30 atletas.
-    // Solo se usa si el nombre no coincidió; nunca modifica las columnas estructurales.
-    const colName=n=>{
-      let x=n,s=""; while(x){const r=(x-1)%26;s=String.fromCharCode(65+r)+s;x=Math.floor((x-1)/26)} return s;
+    // Extrae una celda de una fila por columna.
+    const rowCells=rowXml=>{
+      const out={}; let m;
+      const re=/<c\b([^>]*?)(?:>([\s\S]*?)<\/c>|\s*\/>)/g;
+      while((m=re.exec(rowXml))){
+        const attrs=m[1],body=m[2]; const rm=attrs.match(/\br="([A-Z]+\d+)"/); if(rm)out[rm[1]]=m[0];
+      }
+      return out;
     };
-    const athleteCol=(ath,idx)=>masterCols[normalize(ath.name)]||colName(idx+3);
-
-    const replaceCellValue=(xml,ref,newValue)=>{
-      const re=new RegExp('(<c\\b[^>]*\\br="'+ref.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+'"[^>]*)(>)([\\s\\S]*?)(<\\/c>)');
-      const m=re.exec(xml); if(!m)return xml;
-      let attrs=m[1];
-      if(/\bt="[^"]*"/.test(attrs))attrs=attrs.replace(/\bt="[^"]*"/,'t="s"');
-      else attrs+=' t="s"';
-      let body=m[3];
-      if(/<v>\d+<\/v>/.test(body))body=body.replace(/<v>\d+<\/v>/,'<v>'+newValue+'</v>');
-      else body='<v>'+newValue+'</v>'+body;
-      return xml.slice(0,m.index)+attrs+m[2]+body+m[4]+xml.slice(m.index+m[0].length);
+    const setCellRef=(cell,newRef)=>cell.replace(/\br="[A-Z]+\d+"/,`r="${newRef}"`);
+    const setSharedValue=(cell,idx)=>{
+      let x=cell;
+      if(/\bt="[^"]*"/.test(x))x=x.replace(/\bt="[^"]*"/,'t="s"');else x=x.replace(/<c\b/,'<c t="s"');
+      if(/<v>\d+<\/v>/.test(x))x=x.replace(/<v>\d+<\/v>/,`<v>${idx}</v>`);
+      else x=x.replace(/<\/c>$/,`<v>${idx}</v></c>`);
+      return x;
+    };
+    const setInlineValue=(cell,text)=>{
+      let x=cell.replace(/\bt="[^"]*"/,'t="inlineStr"');
+      if(!/\bt="/.test(x))x=x.replace(/<c\b/,'<c t="inlineStr"');
+      const body=`<is><t>${xmlEsc(text)}</t></is>`;
+      if(/>[^]*<\/c>$/.test(x))x=x.replace(/>([\s\S]*)<\/c>$/,`>${body}</c>`);
+      else x=x.replace(/\/>$/,`>${body}</c>`);
+      return x;
     };
 
-    let updated=0, missing=0, matchedAthletes=0;
-    db.athletes.forEach((ath,idx)=>{
-      const col=athleteCol(ath,idx);
-      // Este paso solo trabaja con las columnas existentes C:AF.
-      if(!col || idx>29)return;
-      matchedAthletes++;
-      db.items.forEach(item=>{
-        const status=(item.status&&item.status[ath.name])||"NA";
-        const idxStatus=statusIndex[status]===undefined?statusIndex.NA:statusIndex[status];
-        const ref=col+Number(item.row), before=sheet;
-        sheet=replaceCellValue(sheet,ref,idxStatus);
-        if(sheet!==before)updated++; else missing++;
+    // Mapas de filas y celdas del maestro.
+    const rowMatches={}; let rmRow;
+    const rowRe=/<row\b([^>]*\br="(\d+)"[^>]*)>([\s\S]*?)<\/row>/g;
+    while((rmRow=rowRe.exec(sheet)))rowMatches[Number(rmRow[2])]={full:rmRow[0],attrs:rmRow[1],body:rmRow[3]};
+
+    // Reescribe únicamente las columnas C:AP de cada fila, preservando A:B y todo el estilo.
+    for(let r=1;r<=279;r++){
+      const rr=rowMatches[r]; if(!rr)continue;
+      const cells=rowCells(rr.body);
+      const keep=[];
+      Object.keys(cells).forEach(ref=>{const c=ref.match(/^([A-Z]+)\d+$/)?.[1];if(c&&(colNum(c)<=2||colNum(c)>42))keep.push(cells[ref]);});
+
+      const generated=[];
+      // Bloque de atletas.
+      orderedAthletes.forEach((ath,i)=>{
+        const target=colName(3+i), key=normalize(ath.name), sourceCol=originalColByName[key]||"C";
+        const source=cells[sourceCol+r]||cells["C"+r];
+        if(!source)throw Error(`No se pudo construir la columna del atleta ${ath.name} en la fila ${r}.`);
+        let cell=setCellRef(source,target+r);
+        if(r===1)cell=setInlineValue(cell,ath.name);
+        else if(r>=3&&r<=279){
+          const status=(db.items||[]).find(it=>Number(it.row)===r)?.status?.[ath.name]||"NA";
+          cell=setSharedValue(cell,statusIndex[status]===undefined?statusIndex.NA:statusIndex[status]);
+        }
+        generated.push(cell);
       });
+      // Estructura original AG:AP se mueve al nuevo final del bloque de atletas.
+      const tailDelta=athleteCount-30;
+      for(let c=33;c<=42;c++){
+        const src=colName(c)+r, source=cells[src];
+        if(!source)continue;
+        generated.push(setCellRef(source,colName(c+tailDelta)+r));
+      }
+      generated.sort((a,b)=>{
+        const ra=a.match(/\br="([A-Z]+)\d+"/)[1], rb=b.match(/\br="([A-Z]+)\d+"/)[1];
+        return colNum(ra)-colNum(rb);
+      });
+      const newBody=[...keep,...generated].sort((a,b)=>{
+        const ra=a.match(/\br="([A-Z]+)\d+"/)[1],rb=b.match(/\br="([A-Z]+)\d+"/)[1];return colNum(ra)-colNum(rb);
+      }).join("");
+      const newSpan=2+Math.max(athleteCount,30)+10;
+      const newAttrs=rr.attrs.replace(/\bspans="[^"]*"/,`spans="1:${newSpan}"`);
+      sheet=sheet.replace(rr.full,`<row ${newAttrs}>${newBody}</row>`);
+    }
+
+    // Ajusta las celdas combinadas del bloque de niveles AG:AP al nuevo desplazamiento.
+    const tailDelta=athleteCount-30;
+    if(tailDelta!==0){
+      sheet=sheet.replace(/(<mergeCell\s+ref=")([A-Z]+)(\d+)(:)([A-Z]+)(\d+)("\s*\/>) /g,(m)=>m);
+      sheet=sheet.replace(/(<mergeCell\s+ref=")([A-Z]+)(\d+)(:)([A-Z]+)(\d+)("\s*\/?>)/g,(m,p,a,r1,sep,b,r2,end)=>{
+        if(colNum(a)>=33)return p+colName(colNum(a)+tailDelta)+r1+sep+colName(colNum(b)+tailDelta)+r2+end;
+        return m;
+      });
+    }
+    // Dimensión de la hoja.
+    sheet=sheet.replace(/<dimension\s+ref="A1:[A-Z]+279"/,`<dimension ref="A1:${colName(42+tailDelta)}279"`);
+
+    // Actualiza anchos de columnas: A:B se conservan; el bloque de atletas usa el ancho de C;
+    // la estructura AG:AP se desplaza según el número de atletas.
+    const colsMatch=sheet.match(/<cols>([\s\S]*?)<\/cols>/);
+    if(colsMatch){
+      const oldCols=colsMatch[1];
+      const defs=[]; const colRe=/<col\b[^>]*\/?>/g; let q;
+      while((q=colRe.exec(oldCols)))defs.push(q[0]);
+      const newDefs=[];
+      defs.forEach(d=>{
+        const mn=Number((d.match(/\bmin="(\d+)"/)||[])[1]),mx=Number((d.match(/\bmax="(\d+)"/)||[])[1]);
+        if(!mn||!mx)return;
+        if(mx<=2)newDefs.push(d);
+      });
+      const athleteEnd=2+athleteCount;
+      newDefs.push(`<col min="3" max="${athleteEnd}" width="3" bestFit="1" customWidth="1"/>`);
+      defs.forEach(d=>{
+        const mn=Number((d.match(/\bmin="(\d+)"/)||[])[1]),mx=Number((d.match(/\bmax="(\d+)"/)||[])[1]);
+        if(!mn||!mx||mx<33)return;
+        const nmin=mn+tailDelta,nmax=mx+tailDelta;
+        newDefs.push(d.replace(/\bmin="\d+"/,`min="${nmin}"`).replace(/\bmax="\d+"/,`max="${nmax}"`));
+      });
+      sheet=sheet.replace(colsMatch[0],`<cols>${newDefs.join("")}</cols>`);
+    }
+
+    // Indicadores: reconstruir filas 4..N a partir de la plantilla, con un registro por atleta.
+    const indRows={}; let irm;
+    const indRowRe=/<row\b([^>]*\br="(\d+)"[^>]*)>([\s\S]*?)<\/row>/g;
+    while((irm=indRowRe.exec(indicators)))indRows[Number(irm[2])]={full:irm[0],attrs:irm[1],body:irm[3]};
+    const template=indRows[4]; if(!template)throw Error("No se encontró la fila base de INDICADORES.");
+    const tCells=rowCells(template.body);
+    const rowsOut=[];
+    orderedAthletes.forEach((ath,i)=>{
+      const r=4+i,col=colName(3+i);
+      const vals={};
+      Object.keys(tCells).forEach(ref=>{
+        const m=ref.match(/^([A-Z]+)4$/); if(!m)return;
+        let cell=setCellRef(tCells[ref],m[1]+r);
+        if(m[1]==="A")cell=setInlineValue(cell,ath.name);
+        if(["B","C","D","E","F"].includes(m[1])){
+          const f=cell.match(/<f([^>]*)>([\s\S]*?)<\/f>/);
+          if(f){
+            let formula=f[2].replace(/NORMATIVOS!C/g,`NORMATIVOS!${col}`).replace(/(NORMATIVOS![A-Z]+)(\d+):([A-Z]+)(\d+)/g,(mm,a,r1,b,r2)=>`${a}${r1}:${b}${r2}`);
+            cell=cell.replace(f[0],`<f${f[1]}>${formula}</f>`);
+          }
+        }
+        if(m[1]==="G"){
+          cell=cell.replace(/<f([^>]*)>([\s\S]*?)<\/f>/,`<f>IFERROR(C${r}/(B${r}-F${r}),0)</f>`);
+        }
+        if(m[1]==="H"){
+          cell=cell.replace(/<f([^>]*)>([\s\S]*?)<\/f>/,`<f>IF(G${r}&gt;=0.8,"Alto avance",IF(G${r}&gt;=0.5,"Avance medio",IF(G${r}&gt;=0.3,"Avance inicial",IF(G${r}&gt;=0.1,"Base solida","Base inicial"))))</f>`);
+        }
+        vals[m[1]]=cell;
+      });
+      rowsOut.push(`<row ${template.attrs.replace(/\br="4"/,'r="'+r+'"')}>${Object.keys(vals).sort((a,b)=>colNum(a)-colNum(b)).map(k=>vals[k]).join("")}</row>`);
     });
+    // Elimina las filas actuales 4..33 y coloca las nuevas.
+    indicators=indicators.replace(/<row\b[^>]*\br="(?:[4-9]|[12]\d|3[0-3])"[^>]*>[\s\S]*?<\/row>/g,"");
+    const insertBefore=indicators.indexOf("</sheetData>");
+    if(insertBefore<0)throw Error("No se encontró sheetData en INDICADORES.");
+    indicators=indicators.slice(0,insertBefore)+rowsOut.join("")+indicators.slice(insertBefore);
+    indicators=indicators.replace(/<dimension\s+ref="A1:H33"/,`<dimension ref="A1:H${3+athleteCount}"`);
 
-    if(!matchedAthletes)throw Error("No se pudieron relacionar los atletas del repositorio con las columnas C:AF del Excel maestro.");
-    if(!updated)throw Error("No se encontraron celdas de estado de los atletas existentes para actualizar.");
+    // Forzar recálculo de fórmulas al abrir el libro.
+    const wbPath="xl/workbook.xml", wbFile=zip.file(wbPath);
+    if(wbFile){
+      let wb=await wbFile.async("string");
+      if(/<calcPr\b/.test(wb))wb=wb.replace(/<calcPr\b[^>]*\/>/,`<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>`);
+      else wb=wb.replace(/<\/workbook>/,`<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>`);
+      zip.file(wbPath,wb);
+    }
 
-    zip.file(sheetPath,sheet);
+    zip.file(sheetPath,sheet);zip.file(indicatorPath,indicators);
     const XLSX_MIME="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     const outBlob=await zip.generateAsync({type:"blob",compression:"STORE",mimeType:XLSX_MIME});
     const outName="NORMATIVOS_AKC_ACTUALIZADO_"+new Date().toISOString().slice(0,10)+".xlsx";
@@ -214,15 +348,13 @@ async function downloadExcel(){
     const saved=await saveFile(outFile,outName);
     if(!saved){setSync("ok","Sincronizado");return;}
     setSync("ok","Sincronizado");
-    toast("Excel actualizado con los cambios del repositorio");
-    console.log("Excel AKC actualizado:",updated,"celdas; no encontradas:",missing,"atletas:",matchedAthletes);
+    toast("Excel actualizado: atletas, evaluaciones y estructura sincronizados");
+    console.log("Excel AKC actualizado",{atletas:athleteCount,nuevos:newAthletes.map(a=>a.name),eliminados:originalNames.filter(n=>!dbAthletes.some(a=>normalize(a.name)===normalize(n)))});
   }catch(e){
-    console.error(e); setSync("ok","Sincronizado");
-    alert("No se pudo generar el Excel actualizado: "+e.message);
-  }finally{
-    if(btn)btn.disabled=false;
-  }
-}function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+    console.error(e);setSync("ok","Sincronizado");alert("No se pudo generar el Excel actualizado: "+e.message);
+  }finally{if(btn)btn.disabled=false;}
+}
+function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function toast(s){const t=document.getElementById("toast");t.textContent=s;t.style.display="block";clearTimeout(window.__t);window.__t=setTimeout(()=>t.style.display="none",1800)}
 init();
 
