@@ -79,7 +79,7 @@ function openAdd(){document.getElementById("newName").value="";document.getEleme
 function addAthlete(){const name=document.getElementById("newName").value.trim();if(!name)return alert("Escribe el nombre del atleta.");if(db.athletes.some(a=>a.name.toLowerCase()===name.toLowerCase()))return alert("Ese atleta ya existe.");const athlete={name,group:document.getElementById("newGroup").value.trim(),level:document.getElementById("newLevel").value.trim(),category:document.getElementById("newCategory").value.trim(),birthDate:document.getElementById("newBirth").value,joinDate:document.getElementById("newJoin").value,column:db.athletes.length+3};db.athletes.push(athlete);db.items.forEach(x=>x.status[name]="NA");closeModal("athleteModal");renderAll();document.getElementById("athlete").value=name;selectAthlete(name);saveCloud()}
 function openDelete(){if(!db.athletes.length)return;document.getElementById("deleteName").textContent=document.getElementById("athlete").value;document.getElementById("confirmDelete").value="";document.getElementById("deleteBtn").disabled=true;document.getElementById("deleteModal").classList.add("show")}
 function checkDelete(){const n=document.getElementById("deleteName").textContent;document.getElementById("deleteBtn").disabled=document.getElementById("confirmDelete").value!==n}
-async function deleteAthlete(){const n=document.getElementById("deleteName").textContent;db.athletes=db.athletes.filter(a=>a.name!==n);db.items.forEach(x=>{if(x.status)delete x.status[n]});if(!db.athletes.length){alert("Debe quedar al menos un atleta en el repositorio.");return}closeModal("deleteModal");renderAll();await saveCloud();toast("Atleta eliminado definitivamente")}
+async function deleteAthlete(){const n=document.getElementById("deleteName").textContent;if(db.athletes.length<=1){alert("Debe quedar al menos un atleta en el repositorio.");return}db.athletes=db.athletes.filter(a=>a.name!==n);db.items.forEach(x=>{if(x.status)delete x.status[n]});closeModal("deleteModal");renderAll();await saveCloud();toast("Atleta eliminado definitivamente")}
 function openAdmin(){document.getElementById("adminModal").classList.add("show")}
 function closeModal(id){document.getElementById(id).classList.remove("show")}
 async function saveFile(blob,name){
@@ -123,11 +123,11 @@ async function downloadExcel(){
 
     const zip=await JSZip.loadAsync(bytes);
     const sheetPath="xl/worksheets/sheet1.xml", ssPath="xl/sharedStrings.xml";
-    const indicatorPath="xl/worksheets/sheet4.xml";
-    const sheetFile=zip.file(sheetPath), ssFile=zip.file(ssPath), indicatorFile=zip.file(indicatorPath);
-    if(!sheetFile||!ssFile||!indicatorFile)throw Error("La plantilla no contiene las hojas necesarias para generar el Excel.");
+    const consolidatedPath="xl/worksheets/sheet4.xml";
+    const sheetFile=zip.file(sheetPath), ssFile=zip.file(ssPath), consolidatedFile=zip.file(consolidatedPath);
+    if(!sheetFile||!ssFile||!consolidatedFile)throw Error("La plantilla no contiene las hojas necesarias para generar el Excel.");
     let sheet=await sheetFile.async("string");
-    let indicators=await indicatorFile.async("string");
+    let consolidated=await consolidatedFile.async("string");
     const ssXml=await ssFile.async("string");
 
     const normalize=s=>String(s??"").replace(/\r?\n/g," ").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim().toLowerCase();
@@ -213,6 +213,7 @@ async function downloadExcel(){
     };
 
     // Mapas de filas y celdas del maestro.
+    const itemRows=new Set((db.items||[]).map(it=>Number(it.row)).filter(Number.isFinite));
     const rowMatches={}; let rmRow;
     const rowRe=/<row\b([^>]*\br="(\d+)"[^>]*)>([\s\S]*?)<\/row>/g;
     while((rmRow=rowRe.exec(sheet)))rowMatches[Number(rmRow[2])]={full:rmRow[0],attrs:rmRow[1],body:rmRow[3]};
@@ -229,7 +230,13 @@ async function downloadExcel(){
       orderedAthletes.forEach((ath,i)=>{
         const target=colName(3+i), key=normalize(ath.name), sourceCol=originalColByName[key]||"C";
         const source=cells[sourceCol+r]||cells["C"+r];
-        if(!source)throw Error(`No se pudo construir la columna del atleta ${ath.name} en la fila ${r}.`);
+        // Algunas filas del maestro son separadores y deliberadamente no tienen
+        // una celda de atleta (por ejemplo la fila 106). No se deben convertir
+        // esas filas en errores; simplemente se conserva el espacio vacío.
+        if(!source){
+          if(itemRows.has(r)) throw Error(`No se pudo construir la columna del atleta ${ath.name} en la fila ${r}.`);
+          return;
+        }
         let cell=setCellRef(source,target+r);
         if(r===1)cell=setInlineValue(cell,ath.name);
         else if(r>=3&&r<=279){
@@ -293,43 +300,48 @@ async function downloadExcel(){
       sheet=sheet.replace(colsMatch[0],`<cols>${newDefs.join("")}</cols>`);
     }
 
-    // Indicadores: reconstruir filas 4..N a partir de la plantilla, con un registro por atleta.
-    const indRows={}; let irm;
-    const indRowRe=/<row\b([^>]*\br="(\d+)"[^>]*)>([\s\S]*?)<\/row>/g;
-    while((irm=indRowRe.exec(indicators)))indRows[Number(irm[2])]={full:irm[0],attrs:irm[1],body:irm[3]};
-    const template=indRows[4]; if(!template)throw Error("No se encontró la fila base de INDICADORES.");
-    const tCells=rowCells(template.body);
-    const rowsOut=[];
+    // INDICADORES (hoja 3) es un tablero resumen y ya usa rangos amplios de
+    // CONSOLIDADO, por lo que no se reconstruye. Solo regeneramos CONSOLIDADO
+    // (hoja 4), que tiene una fila por atleta.
+    const conRowMatches={}; let crm;
+    const conRowRe=/<row\b([^>]*\br="(\d+)"[^>]*)>([\s\S]*?)<\/row>/g;
+    while((crm=conRowRe.exec(consolidated)))conRowMatches[Number(crm[2])]={full:crm[0],attrs:crm[1],body:crm[3]};
+    const conTemplate=conRowMatches[4];
+    if(!conTemplate)throw Error("No se encontró la fila base de CONSOLIDADO.");
+    const conCells=rowCells(conTemplate.body);
+    const conRows=[];
+    const setFormula=(cell,formula)=>{
+      let x=cell;
+      x=x.replace(/\s+t="shared"/g,"").replace(/\s+si="[^"]*"/g,"").replace(/\s+ref="[^"]*"/g,"");
+      if(/<f\b[^>]*>[\s\S]*?<\/f>/.test(x)) x=x.replace(/<f\b[^>]*>[\s\S]*?<\/f>/,`<f>${formula}</f>`);
+      else x=x.replace(/<v>[\s\S]*?<\/v>/,`<f>${formula}</f><v>0</v>`);
+      return x;
+    };
     orderedAthletes.forEach((ath,i)=>{
-      const r=4+i,col=colName(3+i);
-      const vals={};
-      Object.keys(tCells).forEach(ref=>{
+      const r=4+i, col=colName(3+i);
+      const cellsOut=[];
+      Object.keys(conCells).forEach(ref=>{
         const m=ref.match(/^([A-Z]+)4$/); if(!m)return;
-        let cell=setCellRef(tCells[ref],m[1]+r);
-        if(m[1]==="A")cell=setInlineValue(cell,ath.name);
-        if(["B","C","D","E","F"].includes(m[1])){
-          const f=cell.match(/<f([^>]*)>([\s\S]*?)<\/f>/);
-          if(f){
-            let formula=f[2].replace(/NORMATIVOS!C/g,`NORMATIVOS!${col}`).replace(/(NORMATIVOS![A-Z]+)(\d+):([A-Z]+)(\d+)/g,(mm,a,r1,b,r2)=>`${a}${r1}:${b}${r2}`);
-            cell=cell.replace(f[0],`<f${f[1]}>${formula}</f>`);
-          }
-        }
-        if(m[1]==="G"){
-          cell=cell.replace(/<f([^>]*)>([\s\S]*?)<\/f>/,`<f>IFERROR(C${r}/(B${r}-F${r}),0)</f>`);
-        }
-        if(m[1]==="H"){
-          cell=cell.replace(/<f([^>]*)>([\s\S]*?)<\/f>/,`<f>IF(G${r}&gt;=0.8,"Alto avance",IF(G${r}&gt;=0.5,"Avance medio",IF(G${r}&gt;=0.3,"Avance inicial",IF(G${r}&gt;=0.1,"Base solida","Base inicial"))))</f>`);
-        }
-        vals[m[1]]=cell;
+        const c=m[1];
+        let cell=setCellRef(conCells[ref],`${c}${r}`);
+        if(c==="A") cell=setInlineValue(cell,ath.name);
+        else if(c==="B") cell=setFormula(cell,`COUNTA(NORMATIVOS!${col}3:${col}279)`);
+        else if(c==="C") cell=setFormula(cell,`COUNTIF(NORMATIVOS!${col}3:${col}279,"Consolidado")`);
+        else if(c==="D") cell=setFormula(cell,`COUNTIF(NORMATIVOS!${col}3:${col}279,"En proceso")`);
+        else if(c==="E") cell=setFormula(cell,`COUNTIF(NORMATIVOS!${col}3:${col}279,"Proyección")`);
+        else if(c==="F") cell=setFormula(cell,`COUNTIF(NORMATIVOS!${col}3:${col}279,"N/A")`);
+        else if(c==="G") cell=setFormula(cell,`IFERROR(C${r}/(B${r}-F${r}),0)`);
+        else if(c==="H") cell=setFormula(cell,`IF(G${r}>=0.8,"Alto avance",IF(G${r}>=0.5,"Avance medio",IF(G${r}>=0.3,"Avance inicial",IF(G${r}>=0.1,"Base solida","Base inicial"))))`);
+        cellsOut.push(cell);
       });
-      rowsOut.push(`<row ${template.attrs.replace(/\br="4"/,'r="'+r+'"')}>${Object.keys(vals).sort((a,b)=>colNum(a)-colNum(b)).map(k=>vals[k]).join("")}</row>`);
+      cellsOut.sort((a,b)=>{const ra=a.match(/\br="([A-Z]+)\d+"/)[1],rb=b.match(/\br="([A-Z]+)\d+"/)[1];return colNum(ra)-colNum(rb)});
+      conRows.push(`<row ${conTemplate.attrs.replace(/\br="4"/,'r="'+r+'"')}>${cellsOut.join("")}</row>`);
     });
-    // Elimina las filas actuales 4..33 y coloca las nuevas.
-    indicators=indicators.replace(/<row\b[^>]*\br="(?:[4-9]|[12]\d|3[0-3])"[^>]*>[\s\S]*?<\/row>/g,"");
-    const insertBefore=indicators.indexOf("</sheetData>");
-    if(insertBefore<0)throw Error("No se encontró sheetData en INDICADORES.");
-    indicators=indicators.slice(0,insertBefore)+rowsOut.join("")+indicators.slice(insertBefore);
-    indicators=indicators.replace(/<dimension\s+ref="A1:H33"/,`<dimension ref="A1:H${3+athleteCount}"`);
+    consolidated=consolidated.replace(/<row\b[^>]*\br="(?:[4-9]|[1-9]\d|[1-9]\d{2,})"[^>]*>[\s\S]*?<\/row>/g,"");
+    const conInsert=consolidated.indexOf("</sheetData>");
+    if(conInsert<0)throw Error("No se encontró sheetData en CONSOLIDADO.");
+    consolidated=consolidated.slice(0,conInsert)+conRows.join("")+consolidated.slice(conInsert);
+    consolidated=consolidated.replace(/<dimension\s+ref="A1:H33"/,`<dimension ref="A1:H${3+athleteCount}"`);
 
     // Forzar recálculo de fórmulas al abrir el libro.
     const wbPath="xl/workbook.xml", wbFile=zip.file(wbPath);
@@ -340,7 +352,7 @@ async function downloadExcel(){
       zip.file(wbPath,wb);
     }
 
-    zip.file(sheetPath,sheet);zip.file(indicatorPath,indicators);
+    zip.file(sheetPath,sheet);zip.file(consolidatedPath,consolidated);
     const XLSX_MIME="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     const outBlob=await zip.generateAsync({type:"blob",compression:"STORE",mimeType:XLSX_MIME});
     const outName="NORMATIVOS_AKC_ACTUALIZADO_"+new Date().toISOString().slice(0,10)+".xlsx";
